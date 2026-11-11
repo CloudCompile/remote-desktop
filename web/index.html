@@ -1,0 +1,1365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#000000">
+<title>Remote Desktop</title>
+<style>
+  :root{--it:0px;--ib:0px;--il:0px;--ir:0px;--accent:#2a6;--sheet:#161616}
+  html,body{margin:0;padding:0;height:100%;background:#000;color:#eee;font-family:system-ui,-apple-system,sans-serif;
+            overflow:hidden;touch-action:none;overscroll-behavior:none;-webkit-user-select:none;user-select:none;
+            -webkit-touch-callout:none}
+  #app{position:fixed;top:var(--it);bottom:var(--ib);left:var(--il);right:var(--ir);background:#000;overflow:hidden}
+  #screen{position:absolute;inset:0;overflow:hidden}
+  #probe{position:fixed;visibility:hidden;pointer-events:none;
+         padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px)
+                 env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
+
+  /* status pill: bottom center, above the toolbar, out of the menus' way */
+  #status{position:absolute;bottom:calc(var(--ib) + 76px);left:50%;transform:translateX(-50%);z-index:12;
+          background:rgba(16,16,16,.9);border-radius:16px;padding:6px 14px;font-size:12px;color:#9c9;
+          max-width:80%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;
+          transition:opacity .4s;opacity:0}
+  #status.show{opacity:1}
+  #status.err{color:#f88}
+
+  /* bottom toolbar: thumb-reachable, safe-area aware.
+     The bar itself is click-through so only its buttons intercept touches;
+     taps between/around buttons reach the remote desktop underneath. */
+  #bar{position:absolute;left:0;right:0;bottom:0;z-index:11;display:flex;justify-content:space-around;
+       padding:6px calc(var(--ir) + 6px) calc(var(--ib) + 6px) calc(var(--il) + 6px);
+       background:linear-gradient(transparent,rgba(0,0,0,.55) 30%);
+       pointer-events:none;transition:opacity .25s, transform .25s}
+  #bar.hidden{opacity:0;transform:translateY(100%);pointer-events:none}
+  #bar button{pointer-events:auto;min-width:52px;min-height:48px;border:0;border-radius:12px;background:rgba(28,28,28,.92);
+              color:#ddd;font-size:11px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+              gap:2px;padding:4px 8px;-webkit-tap-highlight-color:transparent}
+  #bar button:active{background:var(--accent);color:#fff}
+  #bar button svg{width:22px;height:22px;fill:currentColor}
+  #bar button.on{background:var(--accent);color:#fff}
+  /* grab handle shown while the toolbar is hidden; tap to reveal */
+  #barHandle{position:absolute;left:50%;bottom:calc(var(--ib) + 8px);z-index:11;
+             transform:translateX(-50%);display:flex;align-items:center;justify-content:center;gap:6px;
+             height:32px;padding:0 16px;border:1px solid rgba(255,255,255,.3);border-radius:16px;
+             background:rgba(42,102,102,.94);color:#fff;font-size:12px;font-weight:600;
+             letter-spacing:.02em;box-shadow:0 3px 14px rgba(0,0,0,.55);
+             pointer-events:auto;transition:opacity .2s,transform .2s}
+  #barHandle::before{content:'▲';font-size:10px;opacity:.95}
+  #barHandle:active{background:#3a8c8c;transform:translateX(-50%) scale(.96)}
+  #barHandle.hidden{opacity:0;pointer-events:none;transform:translateX(-50%) translateY(6px)}
+
+  /* menus drop from the TOP of the screen */
+  .backdrop{position:absolute;inset:0;z-index:20;background:rgba(0,0,0,.45);opacity:0;pointer-events:none;
+            transition:opacity .2s}
+  .backdrop.show{opacity:1;pointer-events:auto}
+  .sheet{position:absolute;left:0;right:0;top:0;z-index:21;max-height:78%;overflow-y:auto;
+         background:var(--sheet);border-radius:0 0 16px 16px;
+         padding:calc(var(--it) + 12px) 14px 20px calc(var(--il) + 14px);
+         margin-right:var(--ir);transform:translateY(-105%);transition:transform .25s ease-out;touch-action:pan-y;
+         box-shadow:0 10px 36px rgba(0,0,0,.55)}
+  .sheet.show{transform:translateY(0)}
+  .sheet::before{content:'';position:sticky;top:0;display:block;margin:-4px auto 8px;width:44px;height:4px;
+                 border-radius:2px;background:#444}
+  .sheet h3{font-size:13px;color:#888;margin:8px 0 10px;text-transform:uppercase;letter-spacing:.08em}
+  .sheet .row{display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;align-items:center}
+  .sheet button,.sheet select,.sheet input[type=text]{flex:1 1 auto;min-height:44px;border:0;border-radius:10px;
+         background:#2a2a2a;color:#eee;padding:0 12px;font-size:14px;box-sizing:border-box}
+  .sheet button{background:#333}
+  .sheet button.primary{background:var(--accent);color:#fff}
+  .sheet button.step{flex:0 0 48px}
+  .sheet label{flex:1 1 100%;font-size:12px;color:#999;padding-top:4px}
+  .sheet .val{flex:0 0 56px;text-align:center;color:#9c9;font-size:13px}
+  .sheet input[type=range]{flex:1;width:100%;min-height:36px}
+  .sheet input[type=checkbox]{width:20px;height:20px;min-height:0}
+  .sheet .check{flex:0 1 auto;min-height:44px;display:flex;align-items:center;gap:8px;font-size:14px;
+                background:#222;border-radius:10px;padding:0 12px}
+  .sheet hr{border:0;border-top:1px solid #262626;margin:10px 0}
+  .appgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;margin-bottom:10px}
+  .appgrid button{min-height:64px;display:flex;flex-direction:column;gap:3px;font-size:11.5px;background:#232323;
+                  align-items:center;justify-content:center;text-align:center;
+                  -webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+  .appgrid button small{color:#777;font-size:9.5px;max-width:100%;overflow:hidden;text-overflow:ellipsis;
+                        display:block;white-space:nowrap;padding:0 4px}
+  .appicon{width:32px;height:32px;object-fit:contain;flex:0 0 auto;position:absolute;inset:0}
+  .tilewrap{width:32px;height:32px;position:relative;flex:0 0 auto}
+  .tile{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;
+        color:#fff;font-weight:700;font-size:15px;flex:0 0 auto}
+  .appgrid button:disabled{opacity:.4}
+  .chips{display:flex;gap:6px;overflow-x:auto;padding:2px 0 8px;touch-action:pan-x;-webkit-overflow-scrolling:touch;
+         scrollbar-width:none}
+  .chips::-webkit-scrollbar{display:none}
+  .chips button{flex:0 0 auto;min-height:32px;min-width:0;border:0;border-radius:16px;background:#262626;
+                color:#bbb;font-size:12px;padding:0 14px;-webkit-tap-highlight-color:transparent}
+  .chips button.on{background:var(--accent);color:#fff;font-weight:600}
+  .grphead{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.08em;margin:10px 0 6px;
+           display:flex;align-items:center;gap:8px}
+  .grphead::after{content:'';flex:1;border-top:1px solid #262626}
+  .stats{display:flex;flex-direction:column;gap:8px;font-size:12px}
+  .stat{display:flex;align-items:center;gap:8px}
+  .stat .lbl{flex:0 0 52px;color:#999}
+  .stat .bar{flex:1;height:8px;background:#262626;border-radius:4px;overflow:hidden}
+  .stat .bar i{display:block;height:100%;background:var(--accent)}
+  .stat .val{flex:0 0 84px;text-align:right;color:#ccc}
+  .frow{display:flex;align-items:center;gap:8px;padding:8px 4px;border-bottom:1px solid #262626}
+  .frow .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+  .frow .sz{flex:0 0 auto;color:#777;font-size:11px}
+  .frow button{flex:0 0 auto;min-height:36px;min-width:0;padding:0 10px;font-size:11px}
+  .pinhead .grphead{color:var(--accent)}
+  .strow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #232323}
+  .strow .nm{flex:1;min-width:0}
+  .strow .nm b{display:block;font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .strow .nm small{display:block;color:#888;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .strow button{flex:0 0 auto;min-height:40px;min-width:86px;border:0;border-radius:10px;background:#333;
+                color:#eee;font-size:13px;padding:0 12px;-webkit-tap-highlight-color:transparent}
+  .strow button.primary{background:var(--accent);color:#fff}
+  .strow button:disabled{opacity:.55}
+  #storeList{max-height:46vh;overflow-y:auto;touch-action:pan-y;margin-top:4px}
+  .cliprow{display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid #232323}
+  .cliprow .cv{flex:1;min-width:0;cursor:pointer}
+  .cliprow .cv b{display:block;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;
+                 text-overflow:ellipsis;max-height:2.6em;white-space:pre-wrap}
+  .cliprow .cv small{display:block;color:#777;font-size:10.5px;margin-top:2px}
+  .cliprow button{flex:0 0 auto;min-height:36px;min-width:36px;border:0;border-radius:8px;background:#333;
+                  color:#eee;font-size:12px;padding:0 8px;-webkit-tap-highlight-color:transparent}
+  .cliprow button.del{background:#422;color:#f99}
+  #clipList{max-height:34vh;overflow-y:auto;touch-action:pan-y;margin-top:4px}
+  #info{font-size:10.5px;color:#666;margin-top:6px;line-height:1.5}
+
+  /* connect overlay */
+  #overlay{position:absolute;inset:0;z-index:30;background:#000;display:flex;align-items:center;justify-content:center;
+           flex-direction:column;gap:18px}
+  #overlay.hide{display:none}
+  #overlay .logo{font-size:20px;color:#9c9;letter-spacing:.12em}
+  #overlay button{min-width:200px;min-height:52px;border:0;border-radius:14px;background:var(--accent);
+                  color:#fff;font-size:16px}
+  .spin{width:28px;height:28px;border:3px solid #333;border-top-color:var(--accent);border-radius:50%;
+        animation:sp 1s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div id="probe"></div>
+<div id="app">
+  <div id="screen"></div>
+  <div id="status"></div>
+
+  <button id="barHandle" class="hidden" type="button" title="Show controls">Controls</button>
+  <div id="bar">
+    <button id="bApps"><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg>Apps</button>
+    <button id="bStore"><svg viewBox="0 0 24 24"><path d="M7 18a2 2 0 100 4 2 2 0 000-4zm10 0a2 2 0 100 4 2 2 0 000-4zM7.2 14h9.6c.75 0 1.4-.4 1.7-1.1l3.3-6.9-1.8-.9L16.8 12H7.3L4.3 4H1v2h2l3.6 7.6-1.4 2.5C4.5 17.4 5.5 19 7 19h12v-2H7.2l1-2z"/></svg>Store</button>
+    <button id="bKeys"><svg viewBox="0 0 24 24"><path d="M2 6v12h20V6H2zm18 10h-6v-2h6v2zM4 8h3v2H4V8zm4 0h3v2H8V8zm4 0h3v2h-3V8zm4 0h3v2h-3V8zM4 12h3v2H4v-2zm4 0h11v2H8v-2z"/></svg>Keys</button>
+    <button id="bAudio"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0014 8v8a4.5 4.5 0 002.5 4 4.5 4.5 0 000-8z"/></svg>Audio</button>
+    <button id="bFiles"><svg viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>Files</button>
+    <button id="bFull"><svg viewBox="0 0 24 24"><path d="M4 4h6v2H6v4H4V4zm10 0h6v6h-2V6h-4V4zM4 14h2v4h4v2H4v-6zm14 0h2v6h-6v-2h4v-6z"/></svg>Full</button>
+    <button id="bMore"><svg viewBox="0 0 24 24"><path d="M12 8a2 2 0 100-4 2 2 0 000 4zm0 6a2 2 0 100-4 2 2 0 000 4zm0 6a2 2 0 100-4 2 2 0 000 4z"/></svg>More</button>
+  </div>
+
+  <div class="backdrop" id="backdrop"></div>
+
+  <div class="sheet" id="shApps">
+    <h3>Apps</h3>
+    <div class="row">
+      <input type="text" id="appSearch" placeholder="Filter apps…" enterkeyhint="search">
+    </div>
+    <div class="chips" id="appChips"></div>
+    <div id="appBody"></div>
+    <div class="row"><button class="primary" id="fitBtn">Fit windows to screen</button></div>
+  </div>
+
+  <div class="sheet" id="shStore">
+    <h3>App store</h3>
+    <div class="row">
+      <input type="text" id="storeQ" placeholder="Search apps / packages…" enterkeyhint="search">
+      <button id="storeGo" class="primary" style="flex:0 0 90px">Search</button>
+    </div>
+    <div id="storeList"><div class="strow"><div class="nm"><small>Type to search the app catalog…</small></div></div></div>
+  </div>
+
+  <div class="sheet" id="shAudio">
+    <h3>Audio</h3>
+    <div class="row"><button class="primary" id="audioStart">Start</button><button id="audioStop">Stop</button></div>
+    <div class="row">
+      <label>Codec</label>
+      <select id="audioCodec">
+        <option value="opus" selected>Opus ~100 kbps (mobile data)</option>
+        <option value="pcm">PCM raw (lowest latency)</option>
+      </select>
+    </div>
+    <div class="row"><label>Volume</label><input type="range" id="audioVol" min="0" max="1" step="0.05" value="0.9"></div>
+    <div class="row"><button id="audioTest">Play test tone</button></div>
+  </div>
+
+  <div class="sheet" id="shFiles">
+    <h3>Files — ~/Downloads</h3>
+    <div class="row">
+      <button class="primary" id="upBtn">⬆ Upload from phone</button>
+      <input type="file" id="upInput" multiple style="display:none">
+    </div>
+    <div class="row" id="upProgRow" style="display:none">
+      <div style="flex:1;height:6px;background:#262626;border-radius:3px;overflow:hidden">
+        <div id="upBar" style="height:100%;width:0;background:var(--accent)"></div>
+      </div>
+      <span class="val" id="upPct">0%</span>
+    </div>
+    <div id="fileList"><small style="color:#777">Loading…</small></div>
+  </div>
+
+  <div class="sheet" id="shMore">
+    <h3>System</h3>
+    <div id="statsBox" class="stats"><small style="color:#777">Loading stats…</small></div>
+    <hr>
+    <h3>Display</h3>
+    <div class="row">
+      <button id="matchBtn" class="primary">Match desktop to screen</button>
+    </div>
+    <div class="row">
+      <label>Desktop width (text size)</label>
+      <select id="dw">
+        <option value="0">Auto</option>
+        <option value="800">800 – large text</option>
+        <option value="1000">1000</option>
+        <option value="1280">1280</option>
+        <option value="1600">1600 – small text</option>
+      </select>
+    </div>
+    <div class="row">
+      <label>Stream quality</label>
+      <input type="range" id="quality" min="0" max="9" step="1" value="6">
+      <span class="val" id="qualityVal">6</span>
+    </div>
+    <div class="row">
+      <label>Keep screen awake</label>
+      <div class="check"><input type="checkbox" id="wake" checked></div>
+    </div>
+    <hr>
+    <h3>Screen edges</h3>
+    <div class="row">
+      <label>Reserved edge for system nav bar (px · auto = none unless the OS overlays)</label>
+      <button class="step" id="navMinus">−</button><span class="val" id="navVal">auto</span><button class="step" id="navPlus">+</button>
+    </div>
+    <div class="row">
+      <label>Nav bar side in landscape</label>
+      <select id="side">
+        <option value="auto">Auto</option><option value="right">Right</option><option value="left">Left</option>
+      </select>
+    </div>
+    <div class="row"><button id="autoCrop">Re-detect screen edges</button></div>
+    <hr>
+    <h3>Clipboard history</h3>
+    <div class="row">
+      <button id="copyFromBtn" class="primary">Desktop → Phone</button>
+      <button id="pasteToBtn">Phone → Desktop</button>
+    </div>
+    <div class="row"><button id="typeBtn">Type clipboard as keystrokes</button></div>
+    <div id="clipList"></div>
+    <div class="row"><button id="clipRefresh">Refresh</button><button id="clipClear">Clear history</button></div>
+    <hr>
+    <h3>Session</h3>
+    <div class="row">
+      <button id="reconnectBtn">Reconnect</button>
+      <button id="clipboardBtn">Paste to remote</button>
+    </div>
+    <div class="row"><button id="logoutBtn">Log out</button></div>
+    <div id="info"></div>
+  </div>
+
+  <div id="overlay">
+    <div class="logo">REMOTE DESKTOP</div>
+    <div class="spin" id="ovSpin"></div>
+    <button id="ovBtn" style="display:none">Reconnect</button>
+    <div id="ovText" style="font-size:12px;color:#777">Connecting…</div>
+  </div>
+</div>
+
+<script type="module">
+import RFB from './core/rfb.js';
+import { initTouch } from './touch.js';
+
+const $ = id => document.getElementById(id);
+const root = document.documentElement;
+const screenEl = $('screen'), appEl = $('app');
+const probe = $('probe'), statusEl = $('status');
+let rfb = null, connected = false;
+
+const NAV_DEFAULT = 48;
+const store = {
+  get(k, d){ try { const v = localStorage.getItem('rd_' + k); return v === null ? d : v; } catch(_) { return d; } },
+  set(k, v){ try { localStorage.setItem('rd_' + k, String(v)); } catch(_) {} },
+  del(k){ try { localStorage.removeItem('rd_' + k); } catch(_) {} },
+};
+
+let statusTimer = null;
+function status(t, err){
+  statusEl.textContent = t;
+  statusEl.classList.toggle('err', !!err);
+  statusEl.classList.add('show');
+  clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => statusEl.classList.remove('show'), 4000);
+  $('ovText').textContent = t;
+}
+
+/* ------------------------------------------------------------------ *
+ *  Insets: keep the desktop out from under the Android nav bar        *
+ * ------------------------------------------------------------------ */
+const isTouch = () => matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 1;
+const isLandscape = () => innerWidth > innerHeight;
+
+function envInsets(){
+  const cs = getComputedStyle(probe);
+  return { r: parseFloat(cs.paddingRight) || 0, b: parseFloat(cs.paddingBottom) || 0,
+           l: parseFloat(cs.paddingLeft) || 0 };
+}
+function landscapeSide(){
+  const pref = store.get('side', 'auto');
+  if (pref !== 'auto') return pref;
+  const e = envInsets();
+  if (e.r > e.l && e.r >= 8) return 'right';
+  if (e.l > e.r && e.l >= 8) return 'left';
+  const a = (screen.orientation && screen.orientation.angle) || 0;
+  return (a === 270 || a === -90) ? 'left' : 'right';
+}
+function viewportCoversScreen(){
+  const long = Math.max(screen.width, screen.height);
+  const gap = isLandscape() ? long - innerWidth : long - innerHeight;
+  return gap < 40;
+}
+// Only reserve an edge when the OS actually paints over the page: env()
+// reports a real safe-area inset, or the app runs in true fullscreen.
+// In a normal tab / standalone PWA the viewport already ends above the
+// system nav bar, so reserving space just leaves a dead strip at the bottom
+// that cannot be clicked in the remote UI.
+function osOverlaysEdge(){
+  try { return matchMedia('(display-mode: fullscreen)').matches; } catch (_) { return false; }
+}
+function computeInsets(){
+  if (!isTouch()) return { ins: {t:0,b:0,l:0,r:0}, how: 'desktop browser' };
+  const e = envInsets();
+  const manual = store.get('nav', null);
+  const nav = manual !== null ? parseInt(manual, 10) : NAV_DEFAULT;
+  const auto = (envInset) => envInset >= 8 ? envInset : (osOverlaysEdge() && viewportCoversScreen() ? nav : 0);
+  const ins = { t: 0, b: 0, l: 0, r: 0 };
+  if (isLandscape()) {
+    const side = landscapeSide();
+    const envV = side === 'right' ? e.r : e.l;
+    ins[side] = manual !== null ? nav : auto(envV);
+    return { ins, how: `landscape, nav on ${side}: ${ins[side]}px` };
+  }
+  ins.b = manual !== null ? nav : auto(e.b);
+  return { ins, how: `portrait, nav at bottom: ${ins.b}px` };
+}
+function applyInsets(){
+  const { ins, how } = computeInsets();
+  root.style.setProperty('--it', ins.t + 'px');
+  root.style.setProperty('--ib', ins.b + 'px');
+  root.style.setProperty('--il', ins.l + 'px');
+  root.style.setProperty('--ir', ins.r + 'px');
+  $('navVal').textContent = store.get('nav', null) !== null ? store.get('nav') : 'auto';
+  const r = appEl.getBoundingClientRect();
+  $('info').textContent = `${how} · view ${Math.round(r.width)}×${Math.round(r.height)} · window ${innerWidth}×${innerHeight}`;
+}
+
+/* ------------------------------------------------------------------ *
+ *  Remote desktop size: same proportions as the visible area          *
+ * ------------------------------------------------------------------ */
+function targetSize(){
+  const r = appEl.getBoundingClientRect();
+  const minW = parseInt(store.get('dw', '0'), 10);
+  let w = minW > 0 ? minW : Math.max(r.width, 1000);
+  let h = w * (r.height / Math.max(1, r.width));
+  w = Math.max(320, Math.round(w / 8) * 8);
+  h = Math.max(240, Math.round(h / 8) * 8);
+  return { w, h };
+}
+
+let lastApiSize = '';
+async function matchDesktop(force){
+  if (!rfb) return;
+  const t = targetSize();
+  if (rfb._supportsSetDesktopSize) {
+    rfb._requestRemoteResize();
+    status(`Desktop → ${t.w}×${t.h}`);
+    setTimeout(() => fetch('/api/fit', { method: 'POST' }).catch(() => {}), 1000);
+    return;
+  }
+  const key = t.w + 'x' + t.h;
+  if (!force && key === lastApiSize) return;
+  lastApiSize = key;
+  try {
+    const res = await fetch(`/api/resize?w=${t.w}&h=${t.h}`, { method: 'POST' });
+    const j = await res.json();
+    status(j.ok ? `Desktop → ${t.w}×${t.h}` : 'Resize failed: ' + (j.error || '?'));
+  } catch (_) { status('Resize API unreachable', true); }
+}
+
+function relayout(){
+  applyInsets();
+  if (rfb) { clearTimeout(relayout.t); relayout.t = setTimeout(() => matchDesktop(false), 400); }
+}
+
+/* ------------------------------------------------------------------ *
+ *  Connect with automatic reconnect (no page reload)                  *
+ * ------------------------------------------------------------------ */
+function readVar(name, def){
+  const m = (location.href + location.hash).match(new RegExp('.*[?&]' + name + '=([^&#]*)'));
+  return m ? decodeURIComponent(m[1]) : def;
+}
+const wsUrl = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' +
+  location.hostname + (location.port ? ':' + location.port : '') + '/' + readVar('path', 'websockify');
+const wsPassword = readVar('password', '');
+
+let reconnectDelay = 1000, reconnectTimer = null, userDisconnected = false;
+
+function connect(){
+  clearTimeout(reconnectTimer);
+  userDisconnected = false;
+  if (rfb) { try { rfb.disconnect(); } catch(_) {} rfb = null; }
+  screenEl.textContent = '';
+  $('overlay').classList.remove('hide');
+  $('ovSpin').style.display = '';
+  $('ovBtn').style.display = 'none';
+  applyInsets();  // must run before RFB measures its container
+
+  rfb = new RFB(screenEl, wsUrl, { credentials: { password: wsPassword } });
+  window.rfb = rfb;
+  rfb.scaleViewport = true;
+  rfb.clipViewport = false;
+  rfb.resizeSession = true;
+  rfb.qualityLevel = parseInt(store.get('quality', '6'), 10);
+
+  // custom resize: keep the remote desktop the same proportions as the visible area
+  rfb._requestRemoteResize = function(){
+    clearTimeout(this._resizeTimeout); this._resizeTimeout = null;
+    if (!this._resizeSession || this._viewOnly || !this._supportsSetDesktopSize) return;
+    const t = targetSize();
+    RFB.messages.setDesktopSize(this._sock, t.w, t.h, this._screenID, this._screenFlags);
+  };
+
+  rfb.addEventListener('connect', () => {
+    connected = true;
+    reconnectDelay = 1000;
+    $('overlay').classList.add('hide');
+    status('Connected');
+    if (touchReady && window.__touch?.setRfb) window.__touch.setRfb(rfb);  // re-bind touch layer
+    else initTouchOnce();
+    setTimeout(() => matchDesktop(true), 1200);
+    requestWakeLock();
+  });
+  rfb.addEventListener('disconnect', e => {
+    connected = false;
+    releaseWakeLock();
+    if (e.detail.clean || userDisconnected) {
+      status('Disconnected');
+      $('overlay').classList.remove('hide');
+      $('ovSpin').style.display = 'none';
+      $('ovBtn').style.display = '';
+    } else {
+      status('Connection lost – reconnecting…', true);
+      reconnectTimer = setTimeout(connect, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 15000);
+    }
+  });
+  rfb.addEventListener('credentialsrequired', () =>
+    rfb.sendCredentials({ password: prompt('Password required:') }));
+  rfb.addEventListener('desktopname', e => { document.title = 'Remote – ' + e.detail.name; });
+  rfb.addEventListener('clipboard', e => {
+    if (e.detail.text) { try { navigator.clipboard.writeText(e.detail.text).catch(() => {}); } catch(_) {} }
+  });
+}
+
+$('ovBtn').addEventListener('click', () => { reconnectDelay = 1000; connect(); });
+$('reconnectBtn').addEventListener('click', () => { userDisconnected = false; closeSheets(); connect(); });
+
+/* ------------------------------------------------------------------ *
+ *  Touch layer (init once, survives reconnects)                       *
+ * ------------------------------------------------------------------ */
+let touchReady = false;
+function initTouchOnce(){
+  if (touchReady) return;
+  try {
+    initTouch({
+      rfb, screenEl, appEl, status, $,
+      menu: $('shMore'),           // touch settings get appended to the More sheet
+      keyboardButton: $('bKeys'),  // toolbar button toggles the mobile keyboard
+    });
+    touchReady = true;
+  } catch (e) { console.warn('touch init failed', e); }
+}
+
+/* ------------------------------------------------------------------ *
+ *  Wake lock: keep the phone screen on while connected                *
+ * ------------------------------------------------------------------ */
+let wakeLock = null;
+async function requestWakeLock(){
+  if (!store.get('wake', '1') || !('wakeLock' in navigator) || wakeLock) return;
+  try { wakeLock = await navigator.wakeLock.request('screen'); } catch(_) {}
+  wakeLock && wakeLock.addEventListener('release', () => { wakeLock = null; });
+}
+function releaseWakeLock(){ try { wakeLock && wakeLock.release(); } catch(_) {} wakeLock = null; }
+$('wake').checked = store.get('wake', '1') === '1';
+$('wake').addEventListener('change', e => {
+  store.set('wake', e.target.checked ? '1' : '0');
+  e.target.checked ? requestWakeLock() : releaseWakeLock();
+});
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && connected) requestWakeLock();
+});
+
+/* ------------------------------------------------------------------ *
+ *  Sheets + toolbar                                                   *
+ * ------------------------------------------------------------------ */
+const sheets = [$('shApps'), $('shAudio'), $('shMore'), $('shStore'), $('shFiles')];
+let statsTimer = null;
+function openSheet(el){
+  const was = el.classList.contains('show');
+  closeSheets();
+  if (!was) { el.classList.add('show'); $('backdrop').classList.add('show'); }
+}
+function closeSheets(){
+  sheets.forEach(s => s.classList.remove('show'));
+  $('backdrop').classList.remove('show');
+  if (typeof clipPollStop === 'function') clipPollStop();
+  if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
+}
+$('backdrop').addEventListener('click', closeSheets);
+$('bApps').addEventListener('click', () => { openSheet($('shApps')); loadApps(); });
+$('bStore').addEventListener('click', () => { openSheet($('shStore')); if (!$('shStore').dataset.loaded) storeDefault(); });
+$('bAudio').addEventListener('click', () => { openSheet($('shAudio')); updateAudioBtn(); });
+$('bFiles').addEventListener('click', () => { openSheet($('shFiles')); loadFiles(); });
+$('bMore').addEventListener('click', () => {
+  openSheet($('shMore'));
+  loadClipHistory();
+  loadStats();
+  if (typeof clipPollStart === 'function') clipPollStart();
+  if (statsTimer) clearInterval(statsTimer);
+  statsTimer = setInterval(loadStats, 3000);
+});
+$('bFull').addEventListener('click', async () => {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+  } catch(_) { status('Fullscreen blocked', true); }
+});
+addEventListener('keydown', e => { if (e.key === 'Escape') closeSheets(); });
+
+// The toolbar overlays the bottom of the remote screen, so it stays out of the
+// way: it auto-hides after a few seconds, and touching the remote screen hides
+// it immediately so nothing underneath is blocked. A small handle at the bottom
+// edge (and the buttons themselves) keep it reachable. (The bar is also
+// click-through between its buttons - see the CSS.)
+let barHideTimer = null;
+function showBar(){
+  $('bar').classList.remove('hidden');
+  $('barHandle').classList.add('hidden');
+  clearTimeout(barHideTimer);
+  barHideTimer = setTimeout(hideBar, 6000);
+}
+function hideBar(){
+  clearTimeout(barHideTimer);
+  $('bar').classList.add('hidden');
+  $('barHandle').classList.remove('hidden');
+}
+$('barHandle').addEventListener('click', showBar);
+['pointerdown'].forEach(ev => {
+  document.addEventListener(ev, e => {
+    // interacting with the toolbar (re)arms its auto-hide; tapping the handle
+    // is handled by its click below
+    if ($('bar').contains(e.target)) { showBar(); return; }
+    if ($('barHandle').contains(e.target) || e.target.closest('.sheet')) return;
+    // any touch on the remote desktop gets the toolbar out of the way at once
+    hideBar();
+  }, true);
+});
+hideBar();
+
+/* ------------------------------------------------------------------ *
+ *  Apps: dynamic menu of everything installed on the desktop,         *
+ *  organized by category chips                                        *
+ * ------------------------------------------------------------------ */
+const CATS = [
+  ['Network', 'Internet'], ['InstantMessaging', 'Chat'],
+  ['AudioVideo', 'Music & Video'], ['Office', 'Work'], ['Graphics', 'Graphics'],
+  ['Utility', 'Utilities'], ['System', 'System'], ['Development', 'Dev'],
+  ['Game', 'Games'], ['Education', 'Learning'], ['Science', 'Learning'],
+];
+const isWebApp = a => (a.cmd || '').startsWith('google-chrome --app');
+function bucketOf(a){
+  const cats = (a.categories || '').split(';');
+  for (const [k, label] of CATS) if (cats.includes(k)) return label;
+  return 'Other';
+}
+let appEntries = [];   // cached list from /api/apps
+let appBucket = 'All'; // active category chip
+let pinnedIds = [];    // app ids pinned to the top (server-persisted)
+
+async function loadApps(){
+  try {
+    const [res, pr] = await Promise.all([
+      fetch('/api/apps', { cache: 'no-store' }),
+      fetch('/api/pins', { cache: 'no-store' }).catch(() => null),
+    ]);
+    const j = await res.json();
+    appEntries = j.apps || [];
+    if (pr && pr.ok) { const pj = await pr.json(); pinnedIds = pj.pins || []; }
+    renderChips();
+    renderApps();
+  } catch (_) {
+    $('appBody').textContent = 'Could not reach the control API.';
+  }
+}
+
+async function togglePin(a){
+  try {
+    const r = await fetch('/api/pins/toggle', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: a.id }),
+    });
+    const j = await r.json();
+    if (j.ok) {
+      pinnedIds = j.pins || [];
+      navigator.vibrate && navigator.vibrate(30);
+      status((pinnedIds.includes(a.id) ? '📌 Pinned ' : 'Unpinned ') + a.name);
+      renderApps();
+    }
+  } catch (_) { status('Pin failed', true); }
+}
+
+function renderChips(){
+  const bar = $('appChips');
+  bar.textContent = '';
+  const counts = {};
+  appEntries.forEach(a => { const b = bucketOf(a); counts[b] = (counts[b] || 0) + 1; });
+  const order = ['All', ...CATS.map(c => c[1]).filter(l => counts[l]), 'Other'].filter((v, i, a) => a.indexOf(v) === i);
+  for (const label of order) {
+    const b = document.createElement('button');
+    b.textContent = label === 'All' ? `All · ${appEntries.length}` : `${label} · ${counts[label]}`;
+    b.classList.toggle('on', label === appBucket);
+    b.addEventListener('click', () => { appBucket = label; renderChips(); renderApps(); });
+    bar.appendChild(b);
+  }
+}
+
+const TILecolors = ['#e91e63', '#3f51b5', '#009688', '#673ab7', '#ff5722', '#4caf50', '#607d8b', '#f44336', '#ff9800'];
+function appTile(a){
+  // icon img with graceful fallback to a colored letter tile
+  const wrap = document.createElement('div');
+  wrap.className = 'tilewrap';
+  const letter = document.createElement('div');
+  letter.className = 'tile';
+  const h = [...a.name].reduce((s, c) => (s * 31 + c.charCodeAt(0)) >>> 0, 7);
+  letter.style.background = TILecolors[h % TILecolors.length];
+  letter.textContent = (a.name || '?').trim().charAt(0).toUpperCase();
+  wrap.appendChild(letter);
+  const img = document.createElement('img');
+  img.className = 'appicon';
+  img.alt = '';
+  img.loading = 'lazy';
+  img.src = `/icon/${encodeURIComponent(a.id)}`;
+  img.addEventListener('error', () => img.remove());   // keep letter tile
+  img.addEventListener('load', () => letter.remove());
+  wrap.appendChild(img);
+  return wrap;
+}
+
+function appButton(a){
+  const b = document.createElement('button');
+  b.appendChild(appTile(a));
+  const nm = document.createElement('span');
+  nm.textContent = (isWebApp(a) ? '🌐 ' : '') + a.name;
+  const sm = document.createElement('small');
+  sm.textContent = (isWebApp(a) && !a.desc) ? 'web app' : (a.desc || a.id).slice(0, 42);
+  b.appendChild(nm); b.appendChild(sm);
+  if (pinnedIds.includes(a.id)) {
+    const pin = document.createElement('span');
+    pin.textContent = '📌';
+    pin.style.cssText = 'position:absolute;top:2px;right:4px;font-size:10px';
+    b.style.position = 'relative';
+    b.appendChild(pin);
+  }
+  // long-press (550ms) toggles pin; suppress the click that follows
+  let lpTimer = null, longFired = false;
+  b.addEventListener('pointerdown', () => {
+    longFired = false;
+    lpTimer = setTimeout(() => { longFired = true; togglePin(a); }, 550);
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev =>
+    b.addEventListener(ev, () => clearTimeout(lpTimer)));
+  b.addEventListener('contextmenu', e => e.preventDefault());
+  b.addEventListener('click', async () => {
+    if (longFired) { longFired = false; return; }
+    try {
+      const r = await fetch('/api/launch', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: a.id }),
+      });
+      const j = await r.json();
+      status(j.ok ? (j.focused ? 'Focused ' + a.name : 'Opening ' + a.name) : 'Failed: ' + (j.error || '?'), !j.ok);
+      if (j.ok) closeSheets();
+    } catch (_) { status('Open failed', true); }
+  });
+  return b;
+}
+
+function renderApps(){
+  const body = $('appBody');
+  body.textContent = '';
+  const filter = $('appSearch').value.trim().toLowerCase();
+  const matches = a => (a.name + ' ' + (a.desc || '') + ' ' + a.id).toLowerCase().includes(filter);
+  const groups = {};
+  for (const a of appEntries) {
+    if (filter && !matches(a)) continue;
+    const bucket = filter ? bucketOf(a) : (appBucket === 'All' || bucketOf(a) === appBucket ? bucketOf(a) : null);
+    if (!bucket && !filter) continue;
+    (groups[bucket] = groups[bucket] || []).push(a);
+  }
+  // pinned apps surface in their own group on top (excluded from their category)
+  const showPinned = !filter;
+  const pinSet = new Set(pinnedIds);
+  if (showPinned) {
+    for (const key of Object.keys(groups)) {
+      groups[key] = groups[key].filter(a => !pinSet.has(a.id));
+    }
+  }
+  const pinnedApps = showPinned
+    ? pinnedIds.map(id => appEntries.find(a => a.id === id))
+        .filter(a => a && (appBucket === 'All' || bucketOf(a) === appBucket))
+    : [];
+  const keys = Object.keys(groups).sort((a, b) => {
+    const order = ['Internet', 'Chat', 'Music & Video', 'Work', 'Graphics', 'Utilities', 'System', 'Dev', 'Games', 'Learning', 'Other'];
+    return order.indexOf(a) - order.indexOf(b);
+  });
+  if (!keys.length && !pinnedApps.length) {
+    body.innerHTML = '<small style="color:#777">No apps match.</small>';
+    return;
+  }
+  const emitGroup = (title, list) => {
+    const head = document.createElement('div');
+    head.className = 'grphead';
+    head.textContent = (filter ? `Matches in ${title}` : title);
+    body.appendChild(head);
+    const grid = document.createElement('div');
+    grid.className = 'appgrid';
+    for (const a of list) grid.appendChild(appButton(a));
+    body.appendChild(grid);
+  };
+  if (pinnedApps.length) emitGroup('📌 Pinned', pinnedApps);
+  for (const key of keys) emitGroup(key, groups[key]);
+}
+
+$('appSearch').addEventListener('input', () => renderApps());
+$('fitBtn').addEventListener('click', async () => {
+  try {
+    const r = await fetch('/api/fit', { method: 'POST' });
+    const j = await r.json();
+    status(j.ok ? `Fitted ${j.windows} window(s)` : 'Fit failed', !j.ok);
+  } catch (_) { status('Fit failed', true); }
+});
+
+/* ------------------------------------------------------------------ *
+ *  App store                                                          *
+ * ------------------------------------------------------------------ */
+const storePolls = {};   // pkg -> interval id
+
+function storeRow(app){
+  const row = document.createElement('div');
+  row.className = 'strow';
+  const nm = document.createElement('div');
+  nm.className = 'nm';
+  nm.innerHTML = `<b></b><small></small>`;
+  nm.querySelector('b').textContent = app.label || app.name;
+  nm.querySelector('small').textContent = app.desc || app.pkg || '';
+  const btn = document.createElement('button');
+  row.appendChild(nm); row.appendChild(btn);
+  paintStoreBtn(btn, app);
+  return row;
+}
+
+function paintStoreBtn(btn, app){
+  const pkg = app.pkg || app.name;
+  if (app.installed) {
+    btn.textContent = 'Open';
+    btn.className = 'primary';
+    btn.disabled = false;
+    btn.onclick = () => launchPkg(pkg, app.label || app.name);
+  } else {
+    btn.textContent = 'Install';
+    btn.className = '';
+    btn.disabled = false;
+    btn.onclick = () => installPkg(pkg, btn);
+  }
+}
+
+function launchPkg(pkg, label){
+  fetch('/api/store/launch', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: pkg }),
+  }).then(r => r.json()).then(j => {
+    if (j.ok) { status('Opening ' + (label || pkg)); closeSheets(); }
+    else status('Could not open ' + pkg + (j.error ? ': ' + j.error : ''), true);
+  }).catch(() => status('Launch failed', true));
+}
+
+function installPkg(pkg, btn){
+  btn.disabled = true;
+  btn.textContent = 'Installing…';
+  status('Installing ' + pkg + '…');
+  fetch('/api/store/install', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pkg }),
+  }).then(r => r.json()).then(j => {
+    if (!j.ok) { btn.disabled = false; btn.textContent = 'Install'; status('Install failed: ' + (j.error || '?'), true); return; }
+    // poll until apt finishes (server reports live status)
+    let tries = 0;
+    storePolls[pkg] = setInterval(async () => {
+      tries++;
+      try {
+        const r = await fetch('/api/store/status?pkg=' + encodeURIComponent(pkg), { cache: 'no-store' });
+        const j2 = await r.json();
+        if (j2.installed) {
+          clearInterval(storePolls[pkg]); delete storePolls[pkg];
+          btn.textContent = 'Open'; btn.className = 'primary'; btn.disabled = false;
+          btn.onclick = () => launchPkg(pkg, pkg);
+          status('Installed ' + pkg + ' ✓');
+          return;
+        }
+        if (!j2.installing || tries > 40) {   // ~3.5 min without progress: give up polling
+          clearInterval(storePolls[pkg]); delete storePolls[pkg];
+          btn.textContent = 'Install'; btn.disabled = false;
+          if (tries > 40) status('Install may have failed – check /tmp/remote-install.log', true);
+          return;
+        }
+      } catch (_) {}
+    }, 5000);
+  }).catch(() => { btn.disabled = false; btn.textContent = 'Install'; status('Install failed', true); });
+}
+
+async function storeSearch(q){
+  const list = $('storeList');
+  list.innerHTML = '<div class="strow"><div class="nm"><small>Searching…</small></div></div>';
+  try {
+    const r = await fetch('/api/store/search?q=' + encodeURIComponent(q), { cache: 'no-store' });
+    const j = await r.json();
+    renderStore((j.apps || []), q);
+  } catch (_) {
+    list.innerHTML = '<div class="strow"><div class="nm"><small>Search failed.</small></div></div>';
+  }
+}
+
+function renderStore(apps, q){
+  const list = $('storeList');
+  list.textContent = '';
+  $('shStore').dataset.loaded = '1';
+  if (!apps.length) {
+    list.innerHTML = '<div class="strow"><div class="nm"><small>No results' + (q ? ' for “' + q + '”' : '') + '.</small></div></div>';
+    return;
+  }
+  apps.forEach(a => list.appendChild(storeRow(a)));
+}
+
+async function storeDefault(){
+  // curated catalog first, so the store is useful before typing anything
+  try {
+    const r = await fetch('/api/store', { cache: 'no-store' });
+    const j = await r.json();
+    renderStore(j.apps || []);
+  } catch (_) { renderStore([]); }
+}
+
+$('storeGo').addEventListener('click', () => { const q = $('storeQ').value.trim(); if (q) storeSearch(q); else storeDefault(); });
+$('storeQ').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); const q = $('storeQ').value.trim(); if (q) storeSearch(q); else storeDefault(); }
+});
+
+/* ------------------------------------------------------------------ *
+ *  Display settings                                                   *
+ * ------------------------------------------------------------------ */
+$('matchBtn').addEventListener('click', () => { applyInsets(); matchDesktop(true); closeSheets(); });
+$('autoCrop').addEventListener('click', () => {
+  store.del('nav'); store.del('side'); store.del('dw');
+  $('side').value = 'auto'; $('dw').value = '0';
+  applyInsets(); matchDesktop(true); status('Edges re-detected');
+});
+function stepNav(d){
+  const cur = store.get('nav', null);
+  const curIns = computeInsets().ins;
+  const base = cur !== null ? parseInt(cur, 10)
+    : (curIns[isLandscape() ? (landscapeSide() === 'right' ? 'r' : 'l') : 'b'] || 0);
+  store.set('nav', Math.max(0, Math.min(120, base + d)));
+  relayout();
+}
+$('navMinus').addEventListener('click', () => stepNav(-4));
+$('navPlus').addEventListener('click', () => stepNav(4));
+$('side').value = store.get('side', 'auto');
+$('side').addEventListener('change', e => { store.set('side', e.target.value); relayout(); });
+$('dw').value = store.get('dw', '0');
+$('dw').addEventListener('change', e => { store.set('dw', e.target.value); matchDesktop(true); });
+$('quality').value = store.get('quality', '6');
+$('qualityVal').textContent = $('quality').value;
+$('quality').addEventListener('input', e => {
+  $('qualityVal').textContent = e.target.value;
+  if (rfb) rfb.qualityLevel = parseInt(e.target.value, 10);
+  store.set('quality', e.target.value);
+});
+$('clipboardBtn').addEventListener('click', async () => {
+  try { rfb.clipboardPasteFrom(await navigator.clipboard.readText()); status('Pasted to remote'); }
+  catch (_) { status('Clipboard blocked', true); }
+});
+/* Clipboard buttons: go through the X selections server-side so BOTH the
+   CLIPBOARD (Ctrl+V apps) and PRIMARY (terminals, middle-click) are set. */
+$('copyFromBtn').addEventListener('click', async () => {
+  try {
+    const r = await fetch('/api/clipboard', { cache: 'no-store' });
+    const j = await r.json();
+    const text = j.text || '';
+    if (!text) { status('Desktop clipboard is empty', true); return; }
+    try { await navigator.clipboard.writeText(text); status('Copied ' + text.length + ' chars to phone'); }
+    catch (_) {
+      // browser blocked the write: fall back to a prompt the user can copy from
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.cssText = 'position:fixed;inset:10%;z-index:99;width:80%;height:40%;font-size:13px';
+      document.body.appendChild(ta); ta.select();
+      status('Select all + copy, then close');
+      ta.addEventListener('blur', () => ta.remove());
+    }
+  } catch (_) { status('Clipboard read failed', true); }
+});
+$('pasteToBtn').addEventListener('click', async () => {
+  let text = '';
+  try { text = await navigator.clipboard.readText(); }
+  catch (_) { status('Phone clipboard blocked – use Share → Copy instead', true); return; }
+  if (!text) { status('Phone clipboard is empty', true); return; }
+  try {
+    await fetch('/api/clipboard/set', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    if (rfb) rfb.clipboardPasteFrom(text);   // also notify VNC viewers
+    status('Pasted ' + text.length + ' chars to desktop');
+  } catch (_) { status('Paste failed', true); }
+});
+$('typeBtn').addEventListener('click', async () => {
+  let text = '';
+  try { text = await navigator.clipboard.readText(); }
+  catch (_) { status('Phone clipboard blocked', true); return; }
+  if (!text) { status('Phone clipboard is empty', true); return; }
+  try {
+    const r = await fetch('/api/paste', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    const j = await r.json();
+    status(j.ok ? 'Typed ' + text.length + ' chars into the focused window' : 'Typing failed', !j.ok);
+    closeSheets();
+  } catch (_) { status('Typing failed', true); }
+});
+
+/* Clipboard history: unified list of everything copied on the remote desktop
+   or pushed from the phone. Tap an entry to paste it to the desktop. */
+function timeAgo(t){
+  const s = Math.max(1, Math.floor(Date.now() / 1000 - t));
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+  return Math.floor(s / 86400) + 'd ago';
+}
+
+async function loadClipHistory(){
+  const list = $('clipList');
+  try {
+    const r = await fetch('/api/clipboard/history', { cache: 'no-store' });
+    const j = await r.json();
+    list.textContent = '';
+    if (!j.items || !j.items.length) {
+      list.innerHTML = '<div class="cliprow"><div class="cv"><small>Nothing copied yet. Copy something on the desktop or phone.</small></div></div>';
+      return;
+    }
+    for (const it of j.items) {
+      const row = document.createElement('div');
+      row.className = 'cliprow';
+      const cv = document.createElement('div');
+      cv.className = 'cv';
+      const b = document.createElement('b');
+      b.textContent = it.preview || '(empty)';
+      const small = document.createElement('small');
+      small.textContent = `${it.len} chars · ${timeAgo(it.time)} · ${it.source === 'phone' ? 'phone' : 'desktop'}`;
+      cv.appendChild(b); cv.appendChild(small);
+      cv.addEventListener('click', async () => {         // tap = paste to desktop
+        try {
+          const r2 = await fetch('/api/clipboard/paste', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: it.id }),
+          });
+          const j2 = await r2.json();
+          status(j2.ok ? 'Pasted to desktop' : 'Paste failed', !j2.ok);
+          if (j2.ok) closeSheets();
+        } catch (_) { status('Paste failed', true); }
+      });
+      const toPhone = document.createElement('button');
+      toPhone.textContent = '→📱';
+      toPhone.title = 'Copy to phone';
+      toPhone.addEventListener('click', async e => {
+        e.stopPropagation();
+        try {
+          const r2 = await fetch('/api/clipboard/item?id=' + it.id, { cache: 'no-store' });
+          const j2 = await r2.json();
+          await navigator.clipboard.writeText(j2.text);
+          status('Copied to phone');
+        } catch (_) { status('Phone clipboard write blocked', true); }
+      });
+      const del = document.createElement('button');
+      del.className = 'del';
+      del.textContent = '×';
+      del.addEventListener('click', async e => {
+        e.stopPropagation();
+        try {
+          await fetch('/api/clipboard/remove', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: it.id }),
+          });
+          loadClipHistory();
+        } catch (_) {}
+      });
+      row.appendChild(cv); row.appendChild(toPhone); row.appendChild(del);
+      list.appendChild(row);
+    }
+  } catch (_) {
+    list.innerHTML = '<div class="cliprow"><div class="cv"><small>History unavailable.</small></div></div>';
+  }
+}
+
+$('clipRefresh').addEventListener('click', loadClipHistory);
+$('clipClear').addEventListener('click', async () => {
+  try { await fetch('/api/clipboard/clear', { method: 'POST' }); loadClipHistory(); status('History cleared'); }
+  catch (_) { status('Clear failed', true); }
+});
+
+// live refresh while the More sheet is open
+let clipPoll = null;
+const clipPollStart = () => { clipPollStop(); clipPoll = setInterval(loadClipHistory, 3000); };
+const clipPollStop = () => { if (clipPoll) { clearInterval(clipPoll); clipPoll = null; } };
+$('logoutBtn').addEventListener('click', async () => {
+  await fetch('/api/logout', { method: 'POST' }).catch(() => {});
+  location.href = '/login';
+});
+
+// paste events: forward straight into the remote session
+document.addEventListener('paste', async e => {
+  try {
+    let text = '';
+    if (e.clipboardData && typeof e.clipboardData.getData === 'function')
+      text = e.clipboardData.getData('text/plain') || e.clipboardData.getData('text');
+    if (!text) { try { text = await navigator.clipboard.readText(); } catch(_) {} }
+    if (text) {
+      e.preventDefault();
+      if (rfb) rfb.clipboardPasteFrom(text);
+      // record phone-side copies in the shared clipboard history + X selections
+      fetch('/api/clipboard/set', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      }).catch(() => {});
+      status(`Pasted ${text.length} chars`);
+    }
+  } catch(_) {}
+}, true);
+
+// relayout on rotate / resize / fullscreen
+['resize', 'orientationchange'].forEach(ev =>
+  addEventListener(ev, () => { setTimeout(relayout, 50); setTimeout(relayout, 500); }));
+if (screen.orientation) screen.orientation.addEventListener('change', () => { setTimeout(relayout, 60); setTimeout(relayout, 500); });
+document.addEventListener('fullscreenchange', () => setTimeout(relayout, 200));
+if (window.visualViewport) visualViewport.addEventListener('resize', relayout);
+
+/* ------------------------------------------------------------------ *
+ *  Files: upload / download ~/Downloads on the desktop                *
+ * ------------------------------------------------------------------ */
+const humanSize = n => n >= (1 << 30) ? (n / (1 << 30)).toFixed(1) + ' GB'
+  : n >= (1 << 20) ? (n / (1 << 20)).toFixed(1) + ' MB'
+  : n >= 1024 ? (n / 1024).toFixed(0) + ' KB' : n + ' B';
+
+async function loadFiles(){
+  const box = $('fileList');
+  try {
+    const r = await fetch('/api/files', { cache: 'no-store' });
+    const j = await r.json();
+    box.textContent = '';
+    if (!(j.files || []).length) {
+      box.innerHTML = '<small style="color:#777">~/Downloads is empty. Upload something from your phone.</small>';
+      return;
+    }
+    for (const f of j.files) {
+      const row = document.createElement('div');
+      row.className = 'frow';
+      const nm = document.createElement('div');
+      nm.className = 'nm'; nm.textContent = f.name; nm.title = f.name;
+      const sz = document.createElement('div');
+      sz.className = 'sz'; sz.textContent = humanSize(f.size);
+      const dl = document.createElement('button');
+      dl.textContent = '⬇'; dl.title = 'Save to phone';
+      dl.addEventListener('click', () => {
+        location.href = '/api/download?name=' + encodeURIComponent(f.name);
+      });
+      const del = document.createElement('button');
+      del.textContent = '✕'; del.title = 'Delete on desktop';
+      del.addEventListener('click', async () => {
+        if (!confirm('Delete ' + f.name + ' on the desktop?')) return;
+        try {
+          await fetch('/api/files/delete', { method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: f.name }) });
+        } catch (_) {}
+        loadFiles();
+      });
+      row.appendChild(nm); row.appendChild(sz); row.appendChild(dl); row.appendChild(del);
+      box.appendChild(row);
+    }
+  } catch (_) { box.innerHTML = '<small style="color:#777">Could not list files.</small>'; }
+}
+
+function uploadFile(f){
+  return new Promise(res => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/upload?name=' + encodeURIComponent(f.name));
+    $('upProgRow').style.display = 'flex';
+    xhr.upload.addEventListener('progress', ev => {
+      if (!ev.lengthComputable) return;
+      const pct = Math.round(ev.loaded / ev.total * 100);
+      $('upBar').style.width = pct + '%';
+      $('upPct').textContent = pct + '% · ' + humanSize(ev.loaded);
+    });
+    xhr.addEventListener('load', () => {
+      status(xhr.status === 200 ? 'Uploaded ' + f.name : 'Upload failed (' + xhr.status + ')', xhr.status !== 200);
+      $('upProgRow').style.display = 'none';
+      $('upBar').style.width = '0'; $('upPct').textContent = '0%';
+      res();
+    });
+    xhr.addEventListener('error', () => {
+      status('Upload failed', true);
+      $('upProgRow').style.display = 'none';
+      res();
+    });
+    xhr.send(f);
+  });
+}
+
+$('upBtn').addEventListener('click', () => $('upInput').click());
+$('upInput').addEventListener('change', async e => {
+  const files = [...e.target.files];
+  e.target.value = '';
+  for (const f of files) await uploadFile(f);
+  loadFiles();
+});
+
+/* ------------------------------------------------------------------ *
+ *  System stats (More sheet, polled while open)                       *
+ * ------------------------------------------------------------------ */
+function fmtGB(b){ return (b / (1 << 30)).toFixed(1) + ' GB'; }
+function statRow(lbl, pct, txt){
+  const row = document.createElement('div'); row.className = 'stat';
+  const l = document.createElement('span'); l.className = 'lbl'; l.textContent = lbl;
+  const bar = document.createElement('div'); bar.className = 'bar';
+  const i = document.createElement('i'); i.style.width = Math.min(100, Math.max(0, pct)) + '%'; bar.appendChild(i);
+  const v = document.createElement('span'); v.className = 'val'; v.textContent = txt;
+  row.appendChild(l); row.appendChild(bar); row.appendChild(v);
+  return row;
+}
+async function loadStats(){
+  try {
+    const r = await fetch('/api/stats', { cache: 'no-store' });
+    const s = await r.json();
+    const box = $('statsBox');
+    box.textContent = '';
+    const upH = Math.floor(s.uptime_s / 3600), upM = Math.floor((s.uptime_s % 3600) / 60);
+    box.appendChild(statRow('CPU', s.cpu_pct, s.cpu_pct + '%'));
+    box.appendChild(statRow('RAM', s.mem_total ? 100 * s.mem_used / s.mem_total : 0,
+      fmtGB(s.mem_used) + ' / ' + fmtGB(s.mem_total)));
+    box.appendChild(statRow('Disk', s.disk_total ? 100 * s.disk_used / s.disk_total : 0,
+      fmtGB(s.disk_used) + ' / ' + fmtGB(s.disk_total)));
+    box.appendChild(statRow('Load', s.cores ? 100 * s.load[0] / s.cores : 0,
+      s.load[0] + ' · ' + s.cores + ' cores'));
+    box.appendChild(statRow('Up', 100, upH + 'h ' + upM + 'm'));
+  } catch (_) {}
+}
+
+/* ------------------------------------------------------------------ *
+ *  Audio: Opus (WebM/MSE, ~100 kbps) or raw PCM (Web Audio)           *
+ * ------------------------------------------------------------------ */
+const SR = 44100, CH = 2, FRAME_BYTES = CH * 2;
+let actx = null, reader = null, audioRunning = false, nextTime = 0, carry = new Uint8Array(0), gainNode = null;
+let audioEl = null, mseURL = null, pruneTimer = null;
+
+function updateAudioBtn(){ $('bAudio').classList.toggle('on', audioRunning); }
+
+async function startAudio(){
+  if (audioRunning) return;
+  return $('audioCodec').value === 'opus' ? startOpus() : startPCM();
+}
+
+async function startOpus(){
+  try {
+    audioEl = audioEl || new Audio();
+    audioEl.volume = parseFloat($('audioVol').value);
+    const mse = new MediaSource();
+    mseURL = URL.createObjectURL(mse);
+    audioEl.src = mseURL;
+    await new Promise((res, rej) => {
+      mse.addEventListener('sourceopen', res, { once: true });
+      setTimeout(() => rej(new Error('MediaSource timeout')), 5000);
+    });
+    const sb = mse.addSourceBuffer('audio/webm; codecs="opus"');
+    sb.mode = 'sequence';
+    const resp = await fetch('/api/audio.opus', { cache: 'no-store' });
+    if (!resp.ok || !resp.body) throw new Error('HTTP ' + resp.status);
+    audioRunning = true;
+    updateAudioBtn();
+    status('Audio streaming (Opus ~100 kbps)');
+    audioEl.play().catch(() => {});
+    let queue = [];
+    sb.addEventListener('updateend', () => {
+      if (!audioRunning) return;
+      try {   // live resync: if we lag too far behind, jump near the live edge
+        if (sb.buffered.length) {
+          const end = sb.buffered.end(sb.buffered.length - 1);
+          if (end - audioEl.currentTime > 1.2) audioEl.currentTime = Math.max(0, end - 0.2);
+        }
+      } catch (_) {}
+      if (queue.length && !sb.updating) sb.appendBuffer(queue.shift());
+    });
+    // prune buffered data behind playback so memory doesn't grow forever
+    pruneTimer = setInterval(() => {
+      try {
+        if (!audioRunning || !sb || !sb.buffered.length) return;
+        const start = sb.buffered.start(0);
+        if (start < audioEl.currentTime - 30) sb.remove(start, audioEl.currentTime - 25);
+      } catch (_) {}
+    }, 20000);
+    reader = resp.body.getReader();
+    (async () => {
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done || !audioRunning) break;
+          if (!value || !value.length) continue;
+          queue.push(value);
+          if (queue.length > 300) queue.splice(0, queue.length - 300); // don't hoard if stalled
+          if (!sb.updating && queue.length) sb.appendBuffer(queue.shift());
+        }
+      } catch (_) {}
+      finally { audioRunning = false; updateAudioBtn(); }
+    })();
+  } catch (e) {
+    audioRunning = false;
+    stopAudio();
+    status('Audio failed: ' + e.message, true);
+  }
+}
+
+async function startPCM(){
+  try {
+    actx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: SR });
+    await actx.resume();
+    const resp = await fetch('/api/audio/raw', { cache: 'no-store' });
+    if (!resp.ok || !resp.body) throw new Error('HTTP ' + resp.status);
+    reader = resp.body.getReader();
+    carry = new Uint8Array(0);
+    nextTime = actx.currentTime + 0.25;
+    audioRunning = true;
+    updateAudioBtn();
+    status('Audio streaming (PCM)');
+    (async () => {
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done || !audioRunning) break;
+          if (!value || !value.length) continue;
+          const merged = new Uint8Array(carry.length + value.length);
+          merged.set(carry); merged.set(value, carry.length);
+          const frames = Math.floor(merged.length / FRAME_BYTES);
+          if (!frames) { carry = merged; continue; }
+          carry = merged.slice(frames * FRAME_BYTES);
+          const buf = actx.createBuffer(CH, frames, SR);
+          const L = buf.getChannelData(0), R = buf.getChannelData(1);
+          const dv = new DataView(merged.buffer, merged.byteOffset, frames * FRAME_BYTES);
+          for (let i = 0; i < frames; i++) {
+            L[i] = dv.getInt16(i * 4, true) / 32768;
+            R[i] = dv.getInt16(i * 4 + 2, true) / 32768;
+          }
+          const src = actx.createBufferSource();
+          src.buffer = buf;
+          if (!gainNode) {
+            gainNode = actx.createGain();
+            gainNode.gain.value = parseFloat($('audioVol').value);
+            gainNode.connect(actx.destination);
+          }
+          src.connect(gainNode);
+          const now = actx.currentTime;
+          if (nextTime < now + 0.05) nextTime = now + 0.05;      // underrun: skip ahead
+          if (nextTime > now + 0.6) nextTime = now + 0.25;       // backlog (tab was hidden): drop
+          src.start(nextTime);
+          nextTime += buf.duration;
+        }
+      } catch (_) {}
+      finally { audioRunning = false; updateAudioBtn(); }
+    })();
+  } catch (e) {
+    audioRunning = false;
+    stopAudio();
+    status('Audio failed: ' + e.message, true);
+  }
+}
+function stopAudio(){
+  audioRunning = false;
+  gainNode = null;
+  try { reader && reader.cancel(); } catch(_) {}
+  reader = null; carry = new Uint8Array(0);
+  if (actx) { try { actx.close(); } catch(_) {} actx = null; }
+  if (pruneTimer) { clearInterval(pruneTimer); pruneTimer = null; }
+  if (audioEl) { try { audioEl.pause(); } catch(_) {} audioEl.removeAttribute('src'); }
+  if (mseURL) { try { URL.revokeObjectURL(mseURL); } catch(_) {} mseURL = null; }
+  updateAudioBtn();
+}
+$('audioStart').addEventListener('click', startAudio);
+$('audioStop').addEventListener('click', () => { stopAudio(); status('Audio stopped'); });
+$('audioTest').addEventListener('click', async () => {
+  try { const r = await fetch('/api/audio/test'); const j = await r.json(); status(j.msg || 'test tone'); }
+  catch(_) { status('Test failed', true); }
+});
+$('audioCodec').addEventListener('change', () => {
+  if (audioRunning) { stopAudio(); startAudio(); }
+});
+$('audioVol').addEventListener('input', e => {
+  const v = parseFloat(e.target.value);
+  if (gainNode && actx) gainNode.gain.setTargetAtTime(v, actx.currentTime, 0.02);
+  if (audioEl) audioEl.volume = v;
+});
+// mobile browsers auto-suspend audio contexts in background tabs
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && actx) actx.resume().catch(() => {});
+});
+
+/* ------------------------------------------------------------------ *
+ *  Session keep-alive: refresh page if the API was restarted          *
+ *  (version bump = new deploy)                                        *
+ * ------------------------------------------------------------------ */
+let version = null;
+(async () => {
+  try {
+    const r = await fetch('/api/health', { cache: 'no-store' });
+    if (r.status === 401) { location.href = '/login'; return; }
+  } catch(_) {}
+})();
+setInterval(async () => {
+  if (document.hidden) return;
+  try {
+    const r = await fetch('/api/health', { cache: 'no-store' });
+    if (r.status === 401) location.href = '/login';
+  } catch(_) {}
+}, 60000);
+
+applyInsets();
+connect();
+</script>
+</body>
+</html>

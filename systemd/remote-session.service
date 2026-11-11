@@ -1,0 +1,14 @@
+[Unit]
+Description=Remote desktop VNC session watchdog (Xvnc :1 + PulseAudio)
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USER
+WorkingDirectory=/opt/remote-desktop
+ExecStart=/bin/sh /opt/remote-desktop/session.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

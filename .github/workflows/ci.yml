@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python syntax
+        run: python3 -m py_compile control.py
+
+      - name: Shell syntax
+        run: sh -n session.sh start.sh webapps.sh tunnel-url.sh
+
+      - name: No secrets committed
+        run: |
+          set -e
+          for f in .passhash .pins.json .cliphistory.json; do
+            if [ -e "$f" ]; then echo "refusing: $f must not be committed"; exit 1; fi
+          done
+          ! git ls-files | grep -E '(^|/)(__pycache__|.*\.pyc)$'

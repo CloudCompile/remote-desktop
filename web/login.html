@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111">
+<title>Login · Remote Desktop</title>
+<style>
+  body{background:#111;color:#eee;font-family:system-ui,-apple-system,sans-serif;display:flex;
+       align-items:center;justify-content:center;min-height:100dvh;margin:0;padding:16px;
+       box-sizing:border-box}
+  form{background:#1a1a1a;padding:28px;border-radius:16px;width:100%;max-width:380px;
+       box-shadow:0 12px 40px rgba(0,0,0,.5)}
+  h2{margin:0 0 20px;font-weight:600;letter-spacing:.06em;font-size:18px;color:#9c9;
+     text-transform:uppercase}
+  input{width:100%;padding:14px;margin:6px 0 12px;border-radius:10px;border:1px solid #2c2c2c;
+        background:#262626;color:#fff;font-size:16px;box-sizing:border-box;-webkit-appearance:none}
+  input:focus{outline:2px solid #2a6;border-color:transparent}
+  button{width:100%;padding:14px;border:0;border-radius:10px;background:#2a6;color:#fff;
+         font-size:16px;font-weight:600;-webkit-appearance:none}
+  button:active{background:#285}
+  #msg{color:#f88;margin-top:12px;font-size:14px;min-height:18px}
+</style>
+</head>
+<body>
+<form id="f">
+  <h2>Remote Desktop</h2>
+  <input id="u" placeholder="Username" autocomplete="username" autocapitalize="none" required>
+  <input id="p" type="password" placeholder="Password" autocomplete="current-password" required>
+  <button type="submit">Log in</button>
+  <div id="msg"></div>
+</form>
+<script>
+document.getElementById('f').addEventListener('submit', async e => {
+  e.preventDefault();
+  const msg = document.getElementById('msg');
+  msg.textContent = '';
+  try {
+    const r = await fetch('/api/login', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: document.getElementById('u').value,
+        password: document.getElementById('p').value,
+      }),
+    });
+    const j = await r.json();
+    if (j.ok) location.href = '/';
+    else msg.textContent = j.error || 'Login failed';
+  } catch (_) {
+    msg.textContent = 'Could not reach the server.';
+  }
+});
+</script>
+</body>
+</html>

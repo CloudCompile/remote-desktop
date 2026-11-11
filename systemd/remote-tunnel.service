@@ -1,0 +1,16 @@
+[Unit]
+Description=Cloudflare quick tunnel to the remote desktop
+After=network-online.target remote-control.service
+Wants=network-online.target
+Requires=remote-control.service
+
+[Service]
+Type=simple
+User=YOUR_USER
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/bin/cloudflared tunnel --url http://127.0.0.1:8090 --no-autoupdate
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

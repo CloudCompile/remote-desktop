@@ -1,0 +1,18 @@
+# Runtime / local state — never commit these
+.passhash
+.pins.json
+.cliphistory.json
+__pycache__/
+*.py[cod]
+*.log
+*.tmp
+.venv/
+venv/
+.env
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
