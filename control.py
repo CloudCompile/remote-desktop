@@ -236,6 +236,19 @@ def _is_chrome_browser(wid):
     return _win_title(wid).endswith(" - Google Chrome")
 
 
+def _activate_window(win):
+    """Raise and focus a window, unmapping it first if needed.
+
+    Apps that hide to the tray (Legcord/Discord, many messengers) keep their
+    main window unmapped; `windowactivate` alone does nothing for those.
+    `windowmap` is harmless on already-mapped windows.
+    """
+    _run(["xdotool", "windowmap", win])
+    rc, _, _ = _run(["xdotool", "windowactivate", "--sync", win])
+    _run(["xdotool", "windowraise", win])
+    return rc == 0
+
+
 def _pick_window(wids, chrome=False):
     """Pick the real top-level window from xdotool matches.
 
@@ -257,11 +270,9 @@ def focus_or_launch(cls, launch):
     chrome = "chrome" in cls.lower()
     win = _pick_window(_xdo("search", "--class", cls), chrome=chrome)
     if win:
-        _xdo("windowmap", win)
+        _activate_window(win)
         _xdo("windowmove", win, "0", "0")
         _xdo("windowsize", win, W, H)
-        _xdo("windowraise", win)
-        _xdo("windowactivate", win)
     time.sleep(0.6)
     if not win:
         run_detached(launch)
@@ -437,7 +448,7 @@ def find_app_window(a):
         if rc == 0 and out.strip():
             win = _pick_window(out.split(), chrome=is_chrome)
             if win:
-                _run(["xdotool", "windowactivate", "--sync", win])
+                _activate_window(win)
                 return win
     return None
 
@@ -450,8 +461,7 @@ def launch_desktop(app_id):
         if a["id"] == app_id:
             win = find_app_window(a)
             if win:
-                _run(["xdotool", "windowactivate", "--sync", win])
-                _run(["xdotool", "windowraise", win])
+                _activate_window(win)
                 return {"ok": True, "focused": True}
             if a["terminal"]:
                 run_detached(["xterm", "-title", a["name"], "-e", "sh", "-c", a["cmd"]])
