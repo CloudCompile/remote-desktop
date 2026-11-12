@@ -216,23 +216,57 @@ def _big(wid):
         return False
 
 
+def _win_area(wid):
+    _, geo, _ = _run(["xdotool", "getwindowgeometry", "--shell", wid])
+    d = dict(l.split("=", 1) for l in geo.splitlines() if "=" in l)
+    try:
+        return int(d.get("WIDTH", 0)) * int(d.get("HEIGHT", 0))
+    except ValueError:
+        return 0
+
+
+def _win_title(wid):
+    _, out, _ = _run(["xdotool", "getwindowname", wid])
+    return out.strip()
+
+
+def _is_chrome_browser(wid):
+    # Chrome's normal browser windows end with " - Google Chrome"; --app
+    # windows do not (their titles are just the page/app name).
+    return _win_title(wid).endswith(" - Google Chrome")
+
+
+def _pick_window(wids, chrome=False):
+    """Pick the real top-level window from xdotool matches.
+
+    Chrome creates several tiny helper windows that share WM_CLASS with the
+    browser, so taking the first match focuses something invisible. Prefer
+    big windows and, for Chrome, require a browser (not --app) title.
+    """
+    wids = [w for w in wids if _big(w)]
+    if chrome:
+        wids = [w for w in wids if _is_chrome_browser(w)]
+    if not wids:
+        return None
+    return max(wids, key=_win_area)
+
+
 def focus_or_launch(cls, launch):
     """Bring an app to the front (even if minimized); launch it if not running."""
     W, H = (_xdo("getdisplaygeometry") + ["0", "0"])[:2]
-    for wid in _xdo("search", "--class", cls):
-        if not _big(wid):
-            continue
-        _xdo("windowmap", wid)
-        _xdo("windowmove", wid, "0", "0")
-        _xdo("windowsize", wid, W, H)
-        _xdo("windowraise", wid)
-        _xdo("windowactivate", wid)
+    chrome = "chrome" in cls.lower()
+    win = _pick_window(_xdo("search", "--class", cls), chrome=chrome)
+    if win:
+        _xdo("windowmap", win)
+        _xdo("windowmove", win, "0", "0")
+        _xdo("windowsize", win, W, H)
+        _xdo("windowraise", win)
+        _xdo("windowactivate", win)
     time.sleep(0.6)
-    shown = any(_big(w) for w in _xdo("search", "--onlyvisible", "--class", cls))
-    if not shown:
+    if not win:
         run_detached(launch)
         threading.Thread(target=fit_after_launch, daemon=True).start()
-    return {"ok": True, "shown": shown}
+    return {"ok": True, "shown": bool(win)}
 
 
 def list_windows():
@@ -358,6 +392,7 @@ def find_app_window(a):
     """Find an existing window belonging to app entry a. Returns window id or None."""
     cmd = a.get("cmd") or ""
     is_web = cmd.startswith("google-chrome --app")
+    is_chrome = not is_web and "chrome" in (((a.get("wmclass") or "") + cmd).lower())
     cands = []                                   # (xdotool match kind, pattern)
     # chrome names app-mode windows' WM_CLASS instance after the URL HOST and
     # ignores --class when joining an already-running browser — so hosts
@@ -384,21 +419,26 @@ def find_app_window(a):
     for kind, pat in cands:
         rc, out, _ = _run(["xdotool", "search", "--onlyvisible", "--" + kind, pat])
         if rc == 0 and out.strip():
-            return out.split()[0]
+            win = _pick_window(out.split(), chrome=is_chrome)
+            if win:
+                return win
     # fallback: apps whose titles do start with their name; terminal apps
     # get an exact -title
     if is_web or a.get("terminal"):
         rc, out, _ = _run(["xdotool", "search", "--onlyvisible", "--name",
                            "^" + re.escape(a["name"])])
         if rc == 0 and out.strip():
-            return out.split()[0]
+            win = _pick_window(out.split(), chrome=is_chrome)
+            if win:
+                return win
     # minimized/iconic windows are not "visible" — try the full list and restore
     for kind, pat in cands:
         rc, out, _ = _run(["xdotool", "search", "--" + kind, pat])
         if rc == 0 and out.strip():
-            win = out.split()[0]
-            _run(["xdotool", "windowactivate", "--sync", win])
-            return win
+            win = _pick_window(out.split(), chrome=is_chrome)
+            if win:
+                _run(["xdotool", "windowactivate", "--sync", win])
+                return win
     return None
 
 
