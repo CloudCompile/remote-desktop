@@ -202,6 +202,8 @@ export function initTouch(app) {
       } else {
         touches.forEach(s => { if (s.longTimer) { clearTimeout(s.longTimer); s.longTimer = null; } });
         scrollAccum = 0;
+        // start a fresh scroll baseline when a second finger joins
+        touches._scrollY = undefined;
       }
     }
   }, { passive: false });
@@ -217,6 +219,10 @@ export function initTouch(app) {
       const dt = Math.max(1, now - st.lastT);
       const inst = Math.hypot(dx, dy) / dt;                 // px/ms
       st.vel = st.vel * 0.65 + inst * 0.35;                 // smoothed speed
+      // keep the current position as well as the previous one: two-finger
+      // scroll derives its midpoint from st.x/st.y, so only updating lastX/
+      // lastY leaves the midpoint frozen and scroll never fires.
+      st.x = t.clientX; st.y = t.clientY;
       st.lastX = t.clientX; st.lastY = t.clientY; st.lastT = now;
       if (!st.moved && Math.hypot(t.clientX - st.sx, t.clientY - st.sy) > TAP_MOVE_PX) st.moved = true;
       if (st.longTimer && st.moved) { clearTimeout(st.longTimer); st.longTimer = null; }
@@ -268,6 +274,8 @@ export function initTouch(app) {
       if (st.longTimer) { clearTimeout(st.longTimer); st.longTimer = null; }
       touches.delete(t.identifier);
     }
+    // a lifted finger invalidates the two-finger midpoint baseline
+    if (touches.size < 2) touches._scrollY = undefined;
     const dur = Date.now() - (lifted[0]?.t0 || Date.now());
     const moved = lifted.some(s => s.moved);
 
