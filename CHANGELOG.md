@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/), semver.
 
+## [Unreleased]
+
+### Planned
+
+- v2.0.1 through v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones,
+  release themes and linked issues.
+
 ## [2.0.0] — 2026-11-11
 
 ### Added

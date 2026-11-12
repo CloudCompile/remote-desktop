@@ -10,6 +10,9 @@ through a tunnel, open it on your phone, and use the whole desktop:
 launch/focus apps, pinch-free trackpad gestures, hear desktop audio, copy
 between phone and desktop, and upload/download files.
 
+> **Roadmap:** eight planned releases through v3.0.0, each with a milestone,
+> linked issues and a project board. See [ROADMAP.md](ROADMAP.md).
+
 ```
 ┌──────────────┐   HTTPS    ┌───────────────────────────────┐   RFB    ┌──────────────┐
 │ phone/browser│ ─────────► │ control.py  (127.0.0.1:8090)  │ ───────► │ Xvnc :1      │
