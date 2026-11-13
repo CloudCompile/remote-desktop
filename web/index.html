@@ -309,7 +309,7 @@
       <div class="row"><label data-i18n="apps.editorName">Name</label><input type="text" id="eaName" maxlength="60" placeholder="My app"></div>
       <div class="row"><label data-i18n="apps.editorCmd">Command (binary + arguments — never a shell line)</label><input type="text" id="eaCmd" maxlength="300" placeholder="/usr/bin/foo --flag"></div>
       <div class="row"><label data-i18n="apps.editorWm">Window class to focus (optional)</label><input type="text" id="eaWm" maxlength="60" placeholder="foo.QtMain"></div>
-      <div class="row"><label data-i18n="apps.editorCats">Categories (semicolon separated)</label><input type="text" id="eaCats" maxlength="120" placeholder="Utility"></div>
+      <div id="eaList"></div>
       <div class="row">
         <button class="primary" id="eaSave" data-i18n="btn.save">Save</button>
         <button id="eaCancel" data-i18n="btn.cancel">Cancel</button>
@@ -632,6 +632,21 @@ $('toastUndo').addEventListener('click', () => {
   $('toast').hidden = true;
   if (u && u.fn) try { u.fn(); } catch (_) {}
 });
+
+/* #75: launch failures surface remediation + the failing command (with a
+   copy action) + the request id for the server-log correlation. */
+function launchFail(j, fallback){
+  j = j || {};
+  const parts = [j.hint || j.error || fallback];
+  if (j.cmd) parts.push('$ ' + j.cmd);
+  if (j.rid) parts.push('ref ' + j.rid);
+  const msg = parts.join('  ·  ');
+  toast(msg, j.cmd ? {
+    label: 'Copy command',
+    fn: () => { navigator.clipboard.writeText(j.cmd).then(() => status('Command copied')).catch(() => {}); },
+  } : null);
+  status(msg, true);
+}
 
 /* iOS Safari (#57): Safari fires non-standard gesturestart/gesturechange
    for two-finger pinch and zooms the PAGE unless prevented. The app owns
@@ -1097,7 +1112,7 @@ addEventListener('keydown', e => {
   }
 });
 $('bApps').addEventListener('click', () => { openSheet($('shApps')); loadApps(); });
-$('bStore').addEventListener('click', () => { openSheet($('shStore')); if (!$('shStore').dataset.loaded) storeDefault(); });
+$('bStore').addEventListener('click', () => { openSheet($('shStore')); loadStoreBackend(); if (!$('shStore').dataset.loaded) storeDefault(); });
 $('bAudio').addEventListener('click', () => { openSheet($('shAudio')); updateAudioBtn(); });
 $('bFiles').addEventListener('click', () => { openSheet($('shFiles')); loadFiles(); });
 $('bMore').addEventListener('click', () => {
@@ -1106,6 +1121,14 @@ $('bMore').addEventListener('click', () => {
   loadStats();
   updateConnBox();
   paintBarCust();
+  // geometry state refresh while open (#76)
+  fetch('/api/geometry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+    .then(r => r.json())
+    .then(j => {
+      $('geoChk').checked = j.enabled !== false;
+      $('geoNote').textContent = (j.apps || 0) + ' app(s) have remembered geometry.';
+    })
+    .catch(() => {});
   if (typeof clipPollStart === 'function') clipPollStart();
   if (statsTimer) clearInterval(statsTimer);
   statsTimer = setInterval(() => { loadStats(); updateConnBox(); }, 3000);
@@ -1166,6 +1189,8 @@ function bucketOf(a){
 let appEntries = [];   // cached list from /api/apps
 let appBucket = 'All'; // active category chip
 let pinnedIds = [];    // app ids pinned to the top (server-persisted)
+let pinFolders = [];   // #64: folder list from /api/pins
+let pinFolderSel = null; // #64: selected folder chip (null = all)
 
 async function loadApps(){
   try {
@@ -1175,13 +1200,111 @@ async function loadApps(){
     ]);
     const j = await res.json();
     appEntries = j.apps || [];
-    if (pr && pr.ok) { const pj = await pr.json(); pinnedIds = pj.pins || []; }
+    if (pr && pr.ok) {
+      const pj = await pr.json();
+      pinnedIds = pj.pins || [];
+      pinFolders = (pj.folders || []).filter(f => !f.virtual);   // "Unfiled" is computed client-side
+    }
+    renderFolderChips();
     renderChips();
     renderApps();
   } catch (_) {
     $('appBody').textContent = 'Could not reach the control API.';
   }
 }
+
+/* #64: folder chips over the pin board; "＋" creates a folder. */
+function renderFolderChips(){
+  const bar = $('pinFolders');
+  bar.textContent = '';
+  if (!pinFolders.length) { bar.hidden = true; return; }
+  bar.hidden = false;
+  const unfiled = pinnedIds.filter(id => !pinFolders.some(f => (f.apps || []).includes(id)));
+  const mk = (label, sel, fn, count) => {
+    const chip = document.createElement('button');
+    chip.textContent = label + (count !== undefined ? ` · ${count}` : '');
+    chip.classList.toggle('on', sel);
+    chip.addEventListener('click', () => { if (chip._longFired) { chip._longFired = false; return; } fn(); });
+    // long-press a real folder → delete it; its pins return to Unfiled (#64)
+    let lp = null;
+    chip.addEventListener('pointerdown', e => {
+      if (!label.startsWith('🧷') && label !== 'Unfiled' && label !== '＋ Folder') {
+        lp = setTimeout(() => {
+          chip._longFired = true;
+          const name = label.replace(/ · \d+$/, '');
+          if (confirm(`Delete folder “${name}”? Its pins stay pinned under Unfiled.`)) {
+            fetch('/api/pins/folder?name=' + encodeURIComponent(name), { method: 'DELETE' })
+              .then(r => r.json())
+              .then(j => { if (j.ok) { if (pinFolderSel === name) pinFolderSel = null; loadApps(); status('Folder deleted'); } })
+              .catch(() => {});
+          }
+        }, 550);
+      }
+    });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => chip.addEventListener(ev, () => clearTimeout(lp)));
+    bar.appendChild(chip);
+  };
+  mk('🧷 All pins', pinFolderSel === null, () => { pinFolderSel = null; renderFolderChips(); renderApps(); }, pinnedIds.length);
+  mk('Unfiled', pinFolderSel === '', () => { pinFolderSel = ''; renderFolderChips(); renderApps(); }, unfiled.length);
+  pinFolders.forEach(f => mk(f.name, pinFolderSel === f.name,
+    () => { pinFolderSel = f.name; renderFolderChips(); renderApps(); }, (f.apps || []).length));
+  mk('＋ Folder', false, async () => {
+    const name = prompt('New folder name:');
+    if (!name || !name.trim()) return;
+    try {
+      const r = await fetch('/api/pins/folder', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim() }),
+      });
+      const j = await r.json();
+      if (j.ok) { pinFolderSel = j.name || name.trim(); loadApps(); status('Folder created'); }
+      else status('Folder rejected: ' + (j.error || '?'), true);
+    } catch (_) { status('Folder failed', true); }
+  });
+}
+
+/* #64: move one pinned app between folders (picker overlay). */
+function pickFolder(appId){
+  const box = $('folderPick'), listEl = $('folderPickList');
+  $('folderPickTitle').textContent = 'Move pin to folder';
+  listEl.textContent = '';
+  const choose = async folder => {
+    box.hidden = true;
+    try {
+      const r = await fetch('/api/pins/assign', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: appId, folder }),
+      });
+      const j = await r.json();
+      if (j.ok) { pinnedIds = j.pins || pinnedIds; pinFolders = (j.folders || []).filter(f => !f.virtual); renderFolderChips(); renderApps(); status('Pin moved'); }
+      else status('Move failed: ' + (j.error || '?'), true);
+    } catch (_) { status('Move failed', true); }
+  };
+  const unpin = document.createElement('button');
+  unpin.textContent = '📌 Unpin';
+  unpin.addEventListener('click', () => { box.hidden = true; togglePin({ id: appId, name: appId }); });
+  listEl.appendChild(unpin);
+  const unfiled = document.createElement('button');
+  unfiled.textContent = 'No folder (Unfiled)';
+  unfiled.addEventListener('click', () => choose(''));
+  listEl.appendChild(unfiled);
+  for (const f of pinFolders) {
+    const btn = document.createElement('button');
+    btn.textContent = f.name;
+    btn.addEventListener('click', () => choose(f.name));
+    listEl.appendChild(btn);
+  }
+  const mk = document.createElement('button');
+  mk.textContent = '＋ New folder…';
+  mk.addEventListener('click', () => {
+    const name = prompt('New folder name:');
+    if (name && name.trim()) choose(name.trim());
+  });
+  listEl.appendChild(mk);
+  box.hidden = false;
+}
+$('folderPickCancel').addEventListener('click', () => { $('folderPick').hidden = true; });
+$('folderPick').addEventListener('click', e => { if (e.target.id === 'folderPick') $('folderPick').hidden = true; });
 
 async function togglePin(a){
   try {
@@ -1236,11 +1359,12 @@ function appTile(a){
   return wrap;
 }
 
-function appButton(a){
+function appButton(a, opts){
+  opts = opts || {};
   const b = document.createElement('button');
   b.appendChild(appTile(a));
   const nm = document.createElement('span');
-  nm.textContent = (isWebApp(a) ? '🌐 ' : '') + a.name;
+  nm.textContent = (isWebApp(a) ? '🌐 ' : '') + (a.source === 'custom' ? '🛠️ ' : '') + a.name;
   const sm = document.createElement('small');
   sm.textContent = (isWebApp(a) && !a.desc) ? 'web app' : (a.desc || a.id).slice(0, 42);
   b.appendChild(nm); b.appendChild(sm);
@@ -1251,11 +1375,16 @@ function appButton(a){
     b.style.position = 'relative';
     b.appendChild(pin);
   }
-  // long-press (550ms) toggles pin; suppress the click that follows
+  // long-press (550ms): unpinned → pin; already pinned → folder picker (#64).
+  // Suppress the click that follows.
   let lpTimer = null, longFired = false;
   b.addEventListener('pointerdown', () => {
     longFired = false;
-    lpTimer = setTimeout(() => { longFired = true; togglePin(a); }, 550);
+    lpTimer = setTimeout(() => {
+      longFired = true;
+      if (pinnedIds.includes(a.id)) pickFolder(a.id);
+      else togglePin(a);
+    }, 550);
   });
   ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev =>
     b.addEventListener(ev, () => clearTimeout(lpTimer)));
@@ -1268,10 +1397,24 @@ function appButton(a){
         body: JSON.stringify({ id: a.id }),
       });
       const j = await r.json();
-      status(j.ok ? (j.focused ? 'Focused ' + a.name : 'Opening ' + a.name) : 'Failed: ' + (j.error || '?'), !j.ok);
-      if (j.ok) closeSheets();
+      if (!j.ok) { launchFail(j, 'Failed: ' + (j.error || '?')); return; }  // #75 toast w/ remediation
+      status(j.focused ? 'Focused ' + a.name : 'Opening ' + a.name);
+      closeSheets();
     } catch (_) { status('Open failed', true); }
   });
+  if (opts.arrows) {   // #64: reorder inside the selected folder
+    const up = document.createElement('span');
+    up.textContent = '↑'; up.title = 'Move up in folder';
+    up.setAttribute('role', 'button'); up.tabIndex = 0;
+    up.setAttribute('aria-label', 'Move ' + a.name + ' up in folder');
+    up.style.cssText = 'position:absolute;bottom:4px;right:4px;font-size:12px;color:var(--muted);padding:2px 6px';
+    up.addEventListener('click', e => { e.stopPropagation(); reorderFolderPin(a, -1); });
+    const down = up.cloneNode(true);
+    down.textContent = '↓'; down.title = 'Move down in folder';
+    down.setAttribute('aria-label', 'Move ' + a.name + ' down in folder');
+    down.addEventListener('click', e => { e.stopPropagation(); reorderFolderPin(a, 1); });
+    b.appendChild(up); b.appendChild(down);
+  }
   return b;
 }
 
@@ -1295,30 +1438,67 @@ function renderApps(){
       groups[key] = groups[key].filter(a => !pinSet.has(a.id));
     }
   }
+  // #64: the selected folder narrows the pinned group
+  let pinnedList = pinnedIds;
+  if (pinFolderSel === '') pinnedList = pinnedIds.filter(id => !pinFolders.some(f => (f.apps || []).includes(id)));
+  else if (pinFolderSel !== null) {
+    const f = pinFolders.find(x => x.name === pinFolderSel);
+    pinnedList = f ? pinnedIds.filter(id => (f.apps || []).includes(id)) : [];
+  }
   const pinnedApps = showPinned
-    ? pinnedIds.map(id => appEntries.find(a => a.id === id))
+    ? pinnedList.map(id => appEntries.find(a => a.id === id))
         .filter(a => a && (appBucket === 'All' || bucketOf(a) === appBucket))
+    : [];
+  // #62: the 6 most recently launched apps, straight from the server's
+  // recency flag — shown above everything, never hiding search matches
+  const recentApps = showPinned && appBucket === 'All' && pinFolderSel === null
+    ? appEntries.filter(a => a.recent && !pinSet.has(a.id)).slice(0, 6)
     : [];
   const keys = Object.keys(groups).sort((a, b) => {
     const order = ['Internet', 'Chat', 'Music & Video', 'Work', 'Graphics', 'Utilities', 'System', 'Dev', 'Games', 'Learning', 'Other'];
     return order.indexOf(a) - order.indexOf(b);
   });
-  if (!keys.length && !pinnedApps.length) {
+  if (!keys.length && !pinnedApps.length && !recentApps.length) {
     body.innerHTML = '<small style="color:#777">No apps match.</small>';
     return;
   }
-  const emitGroup = (title, list) => {
+  const emitGroup = (title, list, opts) => {
     const head = document.createElement('div');
     head.className = 'grphead';
     head.textContent = (filter ? `Matches in ${title}` : title);
     body.appendChild(head);
     const grid = document.createElement('div');
     grid.className = 'appgrid';
-    for (const a of list) grid.appendChild(appButton(a));
+    for (const a of list) grid.appendChild(appButton(a, opts));
     body.appendChild(grid);
   };
-  if (pinnedApps.length) emitGroup('📌 Pinned', pinnedApps);
+  if (pinnedApps.length) emitGroup('📌 Pinned' + (pinFolderSel === '' ? ' — Unfiled' : pinFolderSel ? ' — ' + pinFolderSel : ''), pinnedApps, { arrows: showPinned && pinFolderSel !== null });
+  if (recentApps.length) emitGroup('🕐 Recent', recentApps);
   for (const key of keys) emitGroup(key, groups[key]);
+}
+
+/* #64: reorder inside the selected folder; the global pin order keeps
+   every other pin at its position. */
+async function reorderFolderPin(a, dir){
+  const folder = pinFolderSel === '' ? null : pinFolders.find(f => f.name === pinFolderSel);
+  const memberIds = folder
+    ? pinnedIds.filter(id => (folder.apps || []).includes(id))
+    : pinnedIds.filter(id => !pinFolders.some(f => (f.apps || []).includes(id)));
+  const i = memberIds.indexOf(a.id), j = i + dir;
+  if (i < 0 || j < 0 || j >= memberIds.length) return;
+  [memberIds[i], memberIds[j]] = [memberIds[j], memberIds[i]];
+  const sub = memberIds.slice();
+  const newOrder = pinnedIds.map(id => (sub.includes(id) ? sub.shift() : id));
+  sub.filter(x => !newOrder.includes(x)).forEach(x => newOrder.push(x));
+  try {
+    const r = await fetch('/api/pins/reorder', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: newOrder }),
+    });
+    const jr = await r.json();
+    if (jr.ok) { pinnedIds = jr.pins || newOrder; renderApps(); }
+    else status('Reorder failed', true);
+  } catch (_) { status('Reorder failed', true); }
 }
 
 $('appSearch').addEventListener('input', () => renderApps());
@@ -1328,6 +1508,77 @@ $('fitBtn').addEventListener('click', async () => {
     const j = await r.json();
     status(j.ok ? `Fitted ${j.windows} window(s)` : 'Fit failed', !j.ok);
   } catch (_) { status('Fit failed', true); }
+});
+
+/* #62: clear the launch history — pins and apps stay untouched. */
+$('clearHistBtn').addEventListener('click', async () => {
+  try {
+    await fetch('/api/launches/clear', { method: 'POST' });
+    loadApps();
+    status('Launch recents cleared (pins and apps untouched)');
+  } catch (_) { status('Clear failed', true); }
+});
+
+/* ------------------------------------------------------------------ *
+ *  Custom app editor (#63): user-defined entries with argv-vector     *
+ *  commands — the server validates and never touches a shell. Also    *
+ *  lists existing custom entries with delete.                         *
+ * ------------------------------------------------------------------ */
+async function renderCustomList(){
+  const box = $('eaList');
+  box.textContent = '';
+  try {
+    const j = await (await fetch('/api/custom-apps', { cache: 'no-store' })).json();
+    for (const app of (j.apps || [])) {
+      const row = document.createElement('div');
+      row.className = 'strow';
+      const nm = document.createElement('div');
+      nm.className = 'nm';
+      const b = document.createElement('b'); b.textContent = '🛠️ ' + (app.label || app.name || app.id);
+      const sm = document.createElement('small');
+      sm.textContent = Array.isArray(app.cmd) ? app.cmd.join(' ') : String(app.cmd || '');
+      sm.style.wordBreak = 'break-all';
+      nm.appendChild(b); nm.appendChild(sm);
+      const del = document.createElement('button');
+      del.textContent = '✕ Delete';
+      del.setAttribute('aria-label', 'Delete custom app ' + (app.label || app.id));
+      del.addEventListener('click', async () => {
+        if (!confirm('Delete custom app “' + (app.label || app.id) + '”?')) return;
+        try {
+          const r2 = await fetch('/api/custom-apps?id=' + encodeURIComponent(app.id), { method: 'DELETE' });
+          const j2 = await r2.json();
+          status(j2.ok ? 'Custom app deleted' : 'Delete failed', !j2.ok);
+          renderCustomList();
+          loadApps();
+        } catch (_) { status('Delete failed', true); }
+      });
+      row.appendChild(nm); row.appendChild(del);
+      box.appendChild(row);
+    }
+  } catch (_) { /* editor still usable for creating */ }
+}
+$('addAppBtn').addEventListener('click', () => {
+  const ed = $('appEditor');
+  ed.hidden = !ed.hidden;
+  if (!ed.hidden) { renderCustomList(); $('eaName').focus(); }
+});
+$('eaCancel').addEventListener('click', () => { $('appEditor').hidden = true; });
+$('eaSave').addEventListener('click', async () => {
+  const label = $('eaName').value.trim();
+  const cmd = $('eaCmd').value.trim().split(/\s+/).filter(Boolean);
+  if (!label || !cmd.length) { status('Name and command are required', true); return; }
+  try {
+    const r = await fetch('/api/custom-apps', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label, cmd, wmclass: $('eaWm').value.trim() }),
+    });
+    const j = await r.json();
+    if (!j.ok) { status('Rejected: ' + (j.error || '?'), true); return; }
+    $('eaName').value = ''; $('eaCmd').value = ''; $('eaWm').value = '';
+    $('appEditor').hidden = true;
+    loadApps();
+    status('Custom app saved — it launches as a plain argv vector (no shell)');
+  } catch (_) { status('Save failed', true); }
 });
 
 /* ------------------------------------------------------------------ *
@@ -1511,6 +1762,27 @@ $('winsRefresh').addEventListener('click', loadWindows);
  *  App store                                                          *
  * ------------------------------------------------------------------ */
 const storePolls = {};   // pkg -> interval id
+let storeCaps = { search: true, install: true, remove: true, update: true, status: true };
+let storeCols = [];      // curated collections (#69)
+let storeColActive = null;
+
+/* #67: the detected backend's capabilities decide which buttons exist —
+   unsupported operations are hidden, never dead. */
+async function loadStoreBackend(){
+  try {
+    const j = await (await fetch('/api/store/backend', { cache: 'no-store' })).json();
+    storeCaps = j.capabilities || storeCaps;
+    const row = $('storeBackendRow'), msg = $('storeBackendMsg');
+    if (!j.supported) {
+      row.hidden = false;
+      msg.textContent = j.backend === 'none'
+        ? 'No supported package manager found on the desktop — the store is read-only.'
+        : (j.error || 'Package operations are not supported here.') + ' Install, update and remove are hidden.';
+    } else {
+      row.hidden = true;
+    }
+  } catch (_) { /* keep permissive defaults */ }
+}
 
 function storeRow(app){
   const row = document.createElement('div');
@@ -1520,25 +1792,114 @@ function storeRow(app){
   nm.innerHTML = `<b></b><small></small>`;
   nm.querySelector('b').textContent = app.label || app.name;
   nm.querySelector('small').textContent = app.desc || app.pkg || '';
-  const btn = document.createElement('button');
-  row.appendChild(nm); row.appendChild(btn);
-  paintStoreBtn(btn, app);
+  const box = document.createElement('div');
+  box.style.cssText = 'display:flex;gap:6px;flex:0 0 auto';
+  row.appendChild(nm); row.appendChild(box);
+  paintStoreBtns(box, app);
   return row;
 }
 
-function paintStoreBtn(btn, app){
+/* One row paints ALL of its operations (#66): Open / Update / Remove for
+   installed packages, Install otherwise — plus a live Cancel while a job
+   is queued or running. Buttons only exist when the backend supports them
+   (#67). Every box for the same package repaints together. */
+function paintStoreBtns(box, app){
   const pkg = app.pkg || app.name;
-  if (app.installed) {
-    btn.textContent = 'Open';
-    btn.className = 'primary';
-    btn.disabled = false;
-    btn.onclick = () => launchPkg(pkg, app.label || app.name);
-  } else {
-    btn.textContent = 'Install';
-    btn.className = '';
-    btn.disabled = false;
-    btn.onclick = () => installPkg(pkg, btn);
+  box.textContent = '';
+  box.dataset.pkg = pkg;
+  box._app = app;
+  const mk = (txt, primary, fn, title) => {
+    const btn = document.createElement('button');
+    if (primary) btn.className = 'primary';
+    btn.textContent = txt;
+    if (title) btn.title = title;
+    btn.addEventListener('click', fn);
+    box.appendChild(btn);
+    return btn;
+  };
+  const poll = storePolls[pkg];
+  if (poll && poll.iv) {   // one job per package: show progress + cancel
+    mk('✕ Cancel', false, () => cancelPkg(pkg), 'Cancel this ' + (poll.op || 'operation'));
+    return;
   }
+  if (app.installed) {
+    mk('Open', true, () => launchPkg(pkg, app.label || app.name));
+    if (storeCaps.update) mk('Update', false, () => storeOp('update', pkg), 'Upgrade this package');
+    if (storeCaps.remove) mk('Remove', false, () => { if (confirm('Remove ' + pkg + ' from the desktop?')) storeOp('remove', pkg); }, 'Uninstall');
+  } else if (storeCaps.install) {
+    mk('Install', true, () => storeOp('install', pkg));
+  } else {
+    mk('n/a', false, e => e.preventDefault(), 'Not supported by the detected backend');
+    box.querySelector('button').disabled = true;
+  }
+}
+
+function repaintStoreRows(pkg, installed){
+  document.querySelectorAll('#storeList .strow').forEach(row => {
+    const box = row.querySelector('[data-pkg="' + CSS.escape(pkg) + '"]');
+    if (box && box._app) {
+      if (installed !== undefined) box._app.installed = installed;
+      paintStoreBtns(box, box._app);
+    }
+  });
+}
+
+async function storeOp(op, pkg){
+  const verb = { install: 'Install', remove: 'Remove', update: 'Update' }[op] || op;
+  try {
+    const r = await fetch('/api/store/' + op, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pkg }),
+    });
+    const j = await r.json();
+    if (!j.ok) { status(verb + ' failed: ' + (j.error || '?'), true); return; }
+    storePolls[pkg] = { op };                    // row switches to Cancel
+    repaintStoreRows(pkg);
+    status(verb + ' queued for ' + pkg);
+    pollStoreStatus(pkg, op);
+  } catch (_) { status(verb + ' request failed', true); }
+}
+
+async function cancelPkg(pkg){
+  try {
+    const r = await fetch('/api/store/cancel', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pkg }),
+    });
+    const j = await r.json();
+    status(j.ok ? 'Cancelling ' + pkg + '…' : 'Cancel failed: ' + (j.error || '?'), !j.ok);
+  } catch (_) { status('Cancel failed', true); }
+}
+
+function pollStoreStatus(pkg, op){
+  const poll = storePolls[pkg] || (storePolls[pkg] = { op });
+  clearInterval(poll.iv);
+  let tries = 0;
+  poll.iv = setInterval(async () => {
+    tries++;
+    try {
+      const r = await fetch('/api/store/status?pkg=' + encodeURIComponent(pkg), { cache: 'no-store' });
+      const j = await r.json();
+      const st = j.state || '';
+      if (st === 'queued') {   // queue display (#66)
+        status(pkg + ': waiting in queue' + (j.queue_pos ? ' (position ' + j.queue_pos + ')' : '') + ' — one operation runs at a time');
+        return;
+      }
+      if (st === 'running') {
+        const last = (j.log || []).filter(Boolean).slice(-1)[0];
+        status(pkg + ': ' + op + '…' + (last ? ' — ' + last.slice(0, 80) : ''));
+        return;
+      }
+      clearInterval(poll.iv); delete storePolls[pkg];
+      if (st === 'cancelled') status(pkg + ': cancelled');
+      else if (st === 'done' || j.installed) status(pkg + ': ' + op + ' finished ✓');
+      else if (st === 'interrupted') status(pkg + ': interrupted by a server restart — retry when ready', true);
+      else if (st === 'failed') status(pkg + ': ' + op + ' failed — see the log on the desktop (/tmp/remote-install.log)', true);
+      repaintStoreRows(pkg, j.installed);
+    } catch (_) {
+      if (tries > 40) { clearInterval(poll.iv); delete storePolls[pkg]; repaintStoreRows(pkg); }
+    }
+  }, 3000);
 }
 
 function launchPkg(pkg, label){
@@ -1547,42 +1908,8 @@ function launchPkg(pkg, label){
     body: JSON.stringify({ name: pkg }),
   }).then(r => r.json()).then(j => {
     if (j.ok) { status('Opening ' + (label || pkg)); closeSheets(); }
-    else status('Could not open ' + pkg + (j.error ? ': ' + j.error : ''), true);
+    else launchFail(j, 'Could not open ' + pkg);   // #75
   }).catch(() => status('Launch failed', true));
-}
-
-function installPkg(pkg, btn){
-  btn.disabled = true;
-  btn.textContent = 'Installing…';
-  status('Installing ' + pkg + '…');
-  fetch('/api/store/install', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pkg }),
-  }).then(r => r.json()).then(j => {
-    if (!j.ok) { btn.disabled = false; btn.textContent = 'Install'; status('Install failed: ' + (j.error || '?'), true); return; }
-    // poll until apt finishes (server reports live status)
-    let tries = 0;
-    storePolls[pkg] = setInterval(async () => {
-      tries++;
-      try {
-        const r = await fetch('/api/store/status?pkg=' + encodeURIComponent(pkg), { cache: 'no-store' });
-        const j2 = await r.json();
-        if (j2.installed) {
-          clearInterval(storePolls[pkg]); delete storePolls[pkg];
-          btn.textContent = 'Open'; btn.className = 'primary'; btn.disabled = false;
-          btn.onclick = () => launchPkg(pkg, pkg);
-          status('Installed ' + pkg + ' ✓');
-          return;
-        }
-        if (!j2.installing || tries > 40) {   // ~3.5 min without progress: give up polling
-          clearInterval(storePolls[pkg]); delete storePolls[pkg];
-          btn.textContent = 'Install'; btn.disabled = false;
-          if (tries > 40) status('Install may have failed – check /tmp/remote-install.log', true);
-          return;
-        }
-      } catch (_) {}
-    }, 5000);
-  }).catch(() => { btn.disabled = false; btn.textContent = 'Install'; status('Install failed', true); });
 }
 
 async function storeSearch(q){
@@ -1608,8 +1935,43 @@ function renderStore(apps, q){
   apps.forEach(a => list.appendChild(storeRow(a)));
 }
 
+/* #69: curated collections as chips — the catalog ships with the server,
+   so it renders with no network access and never auto-installs. */
+function renderCollections(){
+  const list = $('storeList');
+  const chips = $('storeChips');
+  list.textContent = '';
+  $('shStore').dataset.loaded = '1';
+  if (!storeCols.length) { chips.hidden = true; return false; }
+  chips.hidden = false;
+  chips.textContent = '';
+  const mk = (label, id) => {
+    const chip = document.createElement('button');
+    chip.textContent = label;
+    chip.classList.toggle('on', storeColActive === id);
+    chip.addEventListener('click', () => { storeColActive = storeColActive === id ? null : id; renderCollections(); });
+    chips.appendChild(chip);
+  };
+  mk('All', null);
+  storeCols.forEach(c => mk(c.label || c.id, c.id));
+  for (const c of storeCols) {
+    if (storeColActive && c.id !== storeColActive) continue;
+    const head = document.createElement('div');
+    head.className = 'grphead';
+    head.textContent = c.label || c.id;
+    list.appendChild(head);
+    (c.apps || []).forEach(a => list.appendChild(storeRow(Object.assign({ desc: a.desc || '' }, a, { name: a.label || a.pkg, pkg: a.pkg }))));
+  }
+  return true;
+}
+
 async function storeDefault(){
-  // curated catalog first, so the store is useful before typing anything
+  // curated collections first (#69), legacy catalog as the fallback
+  try {
+    const j = await (await fetch('/api/store/collections', { cache: 'no-store' })).json();
+    storeCols = j.collections || [];
+    if (renderCollections()) return;
+  } catch (_) { /* fall through to the legacy catalog */ }
   try {
     const r = await fetch('/api/store', { cache: 'no-store' });
     const j = await r.json();
@@ -1626,6 +1988,28 @@ $('storeQ').addEventListener('keydown', e => {
  *  Display settings                                                   *
  * ------------------------------------------------------------------ */
 $('matchBtn').addEventListener('click', () => { applyInsets(); matchDesktop(true); closeSheets(); });
+
+/* Per-app geometry remembering (#76): opt-out toggle + reset-to-fit. */
+$('geoChk').addEventListener('change', async e => {
+  try {
+    await fetch('/api/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'geo_remember', value: e.target.checked }),
+    });
+    status(e.target.checked ? 'Windows will reopen at their remembered size' : 'Geometry remembering off');
+  } catch (_) { status('Could not save the setting', true); }
+});
+$('geoReset').addEventListener('click', async () => {
+  try {
+    const r = await fetch('/api/geometry', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reset: true }),
+    });
+    const j = await r.json();
+    $('geoNote').textContent = 'Remembered geometries cleared (' + (j.apps || 0) + ' remaining). Windows fall back to fit.';
+    status('Remembered window geometry cleared');
+  } catch (_) { status('Reset failed', true); }
+});
 $('autoCrop').addEventListener('click', () => {
   store.del('nav'); store.del('side'); store.del('dw');
   $('side').value = 'auto'; $('dw').value = '0';
@@ -1715,14 +2099,27 @@ function timeAgo(t){
   return Math.floor(s / 86400) + 'd ago';
 }
 
+let clipTagFilter = null;   // active tag chip (#70)
+let clipTagsCache = [];
+
 async function loadClipHistory(){
   const list = $('clipList');
+  if (document.activeElement === $('clipQ')) return;  // never clobber typing
   try {
-    const r = await fetch('/api/clipboard/history', { cache: 'no-store' });
+    const q = $('clipQ').value.trim();
+    const p = new URLSearchParams();
+    if (q) p.set('q', q);
+    if (clipTagFilter) p.set('tag', clipTagFilter);
+    const r = await fetch('/api/clipboard/history' + (p.toString() ? '?' + p : ''), { cache: 'no-store' });
     const j = await r.json();
+    clipTagsCache = j.tags || [];
+    paintClipTagChips();
     list.textContent = '';
     if (!j.items || !j.items.length) {
-      list.innerHTML = '<div class="cliprow"><div class="cv"><small>Nothing copied yet. Copy something on the desktop or phone.</small></div></div>';
+      list.innerHTML = '<div class="cliprow"><div class="cv"><small></small></div></div>';
+      list.querySelector('small').textContent = (q || clipTagFilter)
+        ? 'Nothing matches this search/filter.'
+        : 'Nothing copied yet. Copy something on the desktop or phone.';
       return;
     }
     for (const it of j.items) {
@@ -1731,34 +2128,101 @@ async function loadClipHistory(){
       const cv = document.createElement('div');
       cv.className = 'cv';
       const b = document.createElement('b');
-      b.textContent = it.preview || '(empty)';
+      if (it.kind === 'image') {
+        if (it.preview_image) {   // inline thumbnail (#71)
+          const img = document.createElement('img');
+          img.className = 'clipimg'; img.alt = 'clipboard image'; img.decoding = 'async';
+          img.src = it.preview_image;
+          cv.appendChild(img);
+        } else if (it.preview && it.preview !== '(image skipped — too large)') {
+          // older item without an inline preview: lazy-load the full image
+          const img = document.createElement('img');
+          img.className = 'clipimg'; img.alt = 'clipboard image'; img.loading = 'lazy';
+          img.src = '/api/clipboard/image?id=' + encodeURIComponent(it.id);
+          img.addEventListener('error', () => img.remove());
+          cv.appendChild(img);
+        } else {
+          b.textContent = it.preview || '(image)';
+        }
+      } else {
+        b.textContent = (it.kind === 'uri' ? '📁 ' : '') + (it.preview || '(empty)');
+      }
       const small = document.createElement('small');
-      small.textContent = `${it.len} chars · ${timeAgo(it.time)} · ${it.source === 'phone' ? 'phone' : 'desktop'}`;
-      cv.appendChild(b); cv.appendChild(small);
-      cv.addEventListener('click', async () => {         // tap = paste to desktop
+      const kindTxt = it.kind === 'image' ? 'image' : it.kind === 'uri' ? 'file(s)' : (it.len + ' chars');
+      small.textContent = `${kindTxt} · ${timeAgo(it.time)} · ${it.source === 'phone' ? 'phone' : 'desktop'}` + (it.pinned ? ' · 📌' : '');
+      cv.appendChild(b);
+      for (const t of (it.tags || [])) {   // tag chips ride along (#70)
+        const chip = document.createElement('span');
+        chip.className = 'tagchip'; chip.textContent = '#' + t;
+        cv.appendChild(chip);
+      }
+      cv.appendChild(small);
+      cv.addEventListener('click', async () => {         // tap = paste to desktop (images too, #71)
         try {
           const r2 = await fetch('/api/clipboard/paste', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ id: it.id }),
           });
           const j2 = await r2.json();
-          status(j2.ok ? 'Pasted to desktop' : 'Paste failed', !j2.ok);
+          status(j2.ok ? 'Pasted to desktop' : 'Paste failed: ' + (j2.error || '?'), !j2.ok);
           if (j2.ok) closeSheets();
         } catch (_) { status('Paste failed', true); }
       });
-      const toPhone = document.createElement('button');
-      toPhone.textContent = '→📱';
-      toPhone.title = 'Copy to phone';
-      toPhone.setAttribute('aria-label', 'Copy history item to phone');
-      toPhone.addEventListener('click', async e => {
+      const pin = document.createElement('button');      // pin/unpin (#70)
+      pin.textContent = it.pinned ? '📌' : '📍';
+      pin.title = it.pinned ? 'Unpin (returns to normal retention)' : 'Pin (exempt from history trimming)';
+      pin.setAttribute('aria-label', pin.title);
+      pin.addEventListener('click', async e => {
         e.stopPropagation();
         try {
-          const r2 = await fetch('/api/clipboard/item?id=' + it.id, { cache: 'no-store' });
-          const j2 = await r2.json();
-          await navigator.clipboard.writeText(j2.text);
-          status('Copied to phone');
-        } catch (_) { status('Phone clipboard write blocked', true); }
+          const r2 = await fetch('/api/clipboard/pin', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: it.id, pinned: !it.pinned }),
+          });
+          if (!r2.ok) { status('Pin failed', true); return; }
+          navigator.vibrate && navigator.vibrate(20);
+          loadClipHistory();
+        } catch (_) { status('Pin failed', true); }
       });
+      const tag = document.createElement('button');      // edit tags (#70)
+      tag.textContent = '🏷';
+      tag.title = 'Tags'; tag.setAttribute('aria-label', 'Edit tags for this clipboard item');
+      tag.addEventListener('click', async e => {
+        e.stopPropagation();
+        const val = prompt('Tags for this item (comma separated):', (it.tags || []).join(', '));
+        if (val === null) return;
+        try {
+          const r2 = await fetch('/api/clipboard/tag', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: it.id, tags: val }),
+          });
+          if (!r2.ok) { status('Tag failed', true); return; }
+          loadClipHistory();
+        } catch (_) { status('Tag failed', true); }
+      });
+      const toPhone = document.createElement('button');
+      if (it.kind === 'image') {
+        toPhone.textContent = '⬇';
+        toPhone.title = 'Save image to phone';
+        toPhone.setAttribute('aria-label', 'Save clipboard image to phone');
+        toPhone.addEventListener('click', e => {
+          e.stopPropagation();
+          location.href = '/api/clipboard/image?id=' + encodeURIComponent(it.id);  // attachment download (#71)
+        });
+      } else {
+        toPhone.textContent = '→📱';
+        toPhone.title = 'Copy to phone';
+        toPhone.setAttribute('aria-label', 'Copy history item to phone');
+        toPhone.addEventListener('click', async e => {
+          e.stopPropagation();
+          try {
+            const r2 = await fetch('/api/clipboard/item?id=' + it.id, { cache: 'no-store' });
+            const j2 = await r2.json();
+            await navigator.clipboard.writeText(j2.text);
+            status('Copied to phone');
+          } catch (_) { status('Phone clipboard write blocked', true); }
+        });
+      }
       const del = document.createElement('button');
       del.className = 'del';
       del.textContent = '×';
@@ -1773,7 +2237,9 @@ async function loadClipHistory(){
           loadClipHistory();
         } catch (_) {}
       });
-      row.appendChild(cv); row.appendChild(toPhone); row.appendChild(del);
+      row.appendChild(cv);
+      if (it.kind !== 'image') row.appendChild(typeBtnFor(it));   // paste-as-keystrokes (#74)
+      row.appendChild(pin); row.appendChild(tag); row.appendChild(toPhone); row.appendChild(del);
       list.appendChild(row);
     }
   } catch (_) {
@@ -1781,9 +2247,65 @@ async function loadClipHistory(){
   }
 }
 
+function paintClipTagChips(){
+  const bar = $('clipTags');
+  bar.textContent = '';
+  if (!clipTagsCache.length) { bar.hidden = true; return; }
+  bar.hidden = false;
+  const mk = (label, t) => {
+    const chip = document.createElement('button');
+    chip.textContent = label;
+    chip.classList.toggle('on', (t || null) === clipTagFilter);
+    chip.addEventListener('click', () => { clipTagFilter = (clipTagFilter === (t || null)) ? null : (t || null); loadClipHistory(); });
+    bar.appendChild(chip);
+  };
+  mk('All', null);
+  clipTagsCache.slice(0, 12).forEach(t => mk('#' + t, t));
+}
+
+/* #74: per-item "type instead of paste" — reuses the server's xdotool
+   path, warns before large/multiline content, rate-limited client-side. */
+let lastTypeAt = 0;
+function typeBtnFor(it){
+  const btn = document.createElement('button');
+  btn.textContent = '⌨';
+  btn.title = 'Type as keystrokes (fallback for apps that ignore the clipboard)';
+  btn.setAttribute('aria-label', 'Type this item as keystrokes');
+  btn.addEventListener('click', async e => {
+    e.stopPropagation();
+    if (Date.now() - lastTypeAt < 5000) { status('Typing fallback: wait a moment between attempts', true); return; }
+    let text = it.preview || '';
+    try {
+      const r2 = await fetch('/api/clipboard/item?id=' + it.id, { cache: 'no-store' });
+      const j2 = await r2.json();
+      text = j2.text || text;
+    } catch (_) {}
+    if (!text) { status('Nothing to type', true); return; }
+    if (text.length > 2000 || text.includes('\n')) {
+      if (!confirm(`Type ${text.length} characters as keystrokes into the focused window?\nMultiline/large text is slow — use paste instead.`)) return;
+    }
+    lastTypeAt = Date.now();
+    try {
+      const r2 = await fetch('/api/paste', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, mode: 'keys' }),
+      });
+      const j2 = await r2.json();
+      if (j2.ok) { status('Typed ' + text.length + ' chars'); closeSheets(); }
+      else status('Typing refused: ' + (j2.error || 'failed'), true);
+    } catch (_) { status('Typing failed', true); }
+  });
+  return btn;
+}
+
 $('clipRefresh').addEventListener('click', loadClipHistory);
+let clipQDebounce = null;
+$('clipQ').addEventListener('input', () => {
+  clearTimeout(clipQDebounce);
+  clipQDebounce = setTimeout(loadClipHistory, 300);
+});
 $('clipClear').addEventListener('click', async () => {
-  try { await fetch('/api/clipboard/clear', { method: 'POST' }); loadClipHistory(); status('History cleared'); }
+  try { await fetch('/api/clipboard/clear', { method: 'POST' }); loadClipHistory(); status('History cleared (pinned items kept)'); }
   catch (_) { status('Clear failed', true); }
 });
 
@@ -1791,6 +2313,69 @@ $('clipClear').addEventListener('click', async () => {
 let clipPoll = null;
 const clipPollStart = () => { clipPollStop(); clipPoll = setInterval(loadClipHistory, 3000); };
 const clipPollStop = () => { if (clipPoll) { clearInterval(clipPoll); clipPoll = null; } };
+
+/* ------------------------------------------------------------------ *
+ *  Phone sync (#72): opt-in desktop → phone clipboard push. Off by    *
+ *  default, enabled from this toggle only, served ONLY while this     *
+ *  page is visible (a poll tick is skipped when hidden — sync happens *
+ *  on user action/focus, never silently in the background). Denied    *
+ *  clipboard permission degrades to the manual Desktop → Phone flow.  *
+ * ------------------------------------------------------------------ */
+let syncCursor = null, syncTimer = null, syncKnownOn = false;
+async function syncTick(){
+  if (document.hidden) return;
+  try {
+    const r = await fetch('/api/clipboard/sync' + (syncCursor ? '?since=' + encodeURIComponent(syncCursor) : ''), { cache: 'no-store' });
+    const j = await r.json();
+    if (!j.enabled) { if (syncKnownOn) { $('clipSyncChk').checked = false; syncKnownOn = false; paintSyncNote(); } stopSyncPoll(); return; }
+    for (const it of (j.items || [])) {
+      syncCursor = it.id;
+      try {
+        await navigator.clipboard.writeText(it.text);
+        toast('📋 ' + (it.text || '').slice(0, 60));
+      } catch (_) {
+        status('Clipboard permission denied — use Desktop → Phone instead', true);
+        break;  // degrade to the manual flow, keep the cursor for later
+      }
+    }
+  } catch (_) {}
+}
+function startSyncPoll(){ stopSyncPoll(); syncTick(); syncTimer = setInterval(syncTick, 5000); }
+function stopSyncPoll(){ if (syncTimer) { clearInterval(syncTimer); syncTimer = null; } }
+function paintSyncNote(){
+  $('clipSyncNote').textContent = $('clipSyncChk').checked
+    ? 'ON — new desktop copies reach this phone automatically while this page is visible. Nothing leaves the host; use the toggle to stop and clear the sync cursor.'
+    : 'Off — nothing is synced. When on, new desktop copies appear on this phone automatically; the browser may ask for clipboard permission, and a denial falls back to the Desktop → Phone button.';
+}
+$('clipSyncChk').addEventListener('change', async e => {
+  const on = e.target.checked;
+  try {
+    await fetch('/api/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'clip_sync', value: on }),
+    });
+  } catch (_) { status('Could not save the sync setting', true); }
+  if (on) { syncCursor = null; syncKnownOn = true; startSyncPoll(); }
+  else { stopSyncPoll(); syncCursor = null; }   // one tap off + cursor cleared (#72)
+  paintSyncNote();
+  status(on ? 'Clipboard sync ON (while visible)' : 'Clipboard sync OFF — sync cache cleared');
+});
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && syncKnownOn) syncTick();  // focus-triggered catch-up
+});
+// restore the opt-in toggles (#72/#76) on load; the sync poll restarts only
+// because the user explicitly enabled it before — consent is persistent
+(async () => {
+  try {
+    const j = await (await fetch('/api/settings', { cache: 'no-store' })).json();
+    const s = j.settings || {};
+    syncKnownOn = !!s.clip_sync;
+    $('clipSyncChk').checked = syncKnownOn;
+    if (syncKnownOn) startSyncPoll();
+    paintSyncNote();
+    $('geoChk').checked = s.geo_remember !== false;
+  } catch (_) { paintSyncNote(); }
+})();
 $('logoutBtn').addEventListener('click', async () => {
   await fetch('/api/logout', { method: 'POST' }).catch(() => {});
   location.href = '/login';

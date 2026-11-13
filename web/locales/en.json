@@ -86,5 +86,18 @@
   "aria.keyKeys": "Keysym sequence",
   "aria.moveUp": "Move up",
   "aria.moveDown": "Move down",
-  "aria.removeKey": "Remove key"
+  "aria.removeKey": "Remove key",
+  "bar.windows": "Windows",
+  "sheet.windows": "Windows",
+  "apps.addCustom": "＋ Custom app…",
+  "apps.clearHist": "Clear recents",
+  "apps.editor": "Custom app",
+  "apps.editorName": "Name",
+  "apps.editorCmd": "Command (binary + arguments — never a shell line)",
+  "apps.editorWm": "Window class to focus (optional)",
+  "btn.save": "Save",
+  "btn.cancel": "Cancel",
+  "more.clipSync": "Auto-sync desktop → phone (while visible)",
+  "more.geoRemember": "Remember per-app window size & position",
+  "more.geoReset": "Reset"
 }

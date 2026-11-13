@@ -86,5 +86,18 @@
   "aria.keyKeys": "Keysym-Folge",
   "aria.moveUp": "Nach oben",
   "aria.moveDown": "Nach unten",
-  "aria.removeKey": "Taste entfernen"
+  "aria.removeKey": "Taste entfernen",
+  "bar.windows": "Fenster",
+  "sheet.windows": "Fenster",
+  "apps.addCustom": "＋ Eigene App…",
+  "apps.clearHist": "Verlauf leeren",
+  "apps.editor": "Eigene App",
+  "apps.editorName": "Name",
+  "apps.editorCmd": "Befehl (Programm + Argumente — nie eine Shell-Zeile)",
+  "apps.editorWm": "Fensterklasse zum Fokussieren (optional)",
+  "btn.save": "Speichern",
+  "btn.cancel": "Abbrechen",
+  "more.clipSync": "Zwischenablage automatisch → Telefon (bei sichtbarem Tab)",
+  "more.geoRemember": "Fenstergröße & -position pro App merken",
+  "more.geoReset": "Zurücksetzen"
 }

@@ -86,5 +86,18 @@
   "aria.keyKeys": "Séquence de keysyms",
   "aria.moveUp": "Monter",
   "aria.moveDown": "Descendre",
-  "aria.removeKey": "Supprimer la touche"
+  "aria.removeKey": "Supprimer la touche",
+  "bar.windows": "Fenêtres",
+  "sheet.windows": "Fenêtres",
+  "apps.addCustom": "＋ App personnalisée…",
+  "apps.clearHist": "Effacer les récents",
+  "apps.editor": "App personnalisée",
+  "apps.editorName": "Nom",
+  "apps.editorCmd": "Commande (binaire + arguments — jamais une ligne de shell)",
+  "apps.editorWm": "Classe de fenêtre à focus (optionnel)",
+  "btn.save": "Enregistrer",
+  "btn.cancel": "Annuler",
+  "more.clipSync": "Sync. presse-papiers → téléphone (onglet visible)",
+  "more.geoRemember": "Mémoriser taille et position des fenêtres par app",
+  "more.geoReset": "Réinitialiser"
 }

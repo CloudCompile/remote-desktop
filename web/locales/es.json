@@ -86,5 +86,18 @@
   "aria.keyKeys": "Secuencia de keysyms",
   "aria.moveUp": "Subir",
   "aria.moveDown": "Bajar",
-  "aria.removeKey": "Quitar tecla"
+  "aria.removeKey": "Quitar tecla",
+  "bar.windows": "Ventanas",
+  "sheet.windows": "Ventanas",
+  "apps.addCustom": "＋ App personalizada…",
+  "apps.clearHist": "Borrar recientes",
+  "apps.editor": "App personalizada",
+  "apps.editorName": "Nombre",
+  "apps.editorCmd": "Comando (binario + argumentos — nunca una línea de shell)",
+  "apps.editorWm": "Clase de ventana a enfocar (opcional)",
+  "btn.save": "Guardar",
+  "btn.cancel": "Cancelar",
+  "more.clipSync": "Sincronizar portapapeles → teléfono (con la pestaña visible)",
+  "more.geoRemember": "Recordar tamaño y posición de ventana por app",
+  "more.geoReset": "Restablecer"
 }
