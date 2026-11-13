@@ -7,8 +7,56 @@ Format: [Keep a Changelog](https://keepachangelog.com/), semver.
 
 ### Planned
 
-- v2.1.0 through v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones,
+- v2.2.0 through v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones,
   release themes and linked issues.
+
+## [2.1.0] — 2026-11-13
+
+### Added
+
+- `control.py` is now a thin entry point over the `remote_desktop/`
+  package — config, logging, auth, HTTP, websockets, VNC proxy, audio,
+  media-in, clipboard, files, apps, store, windows and stats are separate
+  testable modules with an ownership map in docs/ARCHITECTURE.md (#22).
+- Centralized `RD_*` configuration schema with startup validation,
+  `--check-config`, optional `RD_CONFIG` file and a generated
+  docs/CONFIGURATION.md (#23).
+- Structured logging with levels (`RD_LOG_LEVEL`), optional JSON output
+  (`RD_LOG_FORMAT`), rotation, and an `X-Request-Id` header per request (#24).
+- Readiness checks for X, VNC, PulseAudio and ffmpeg via `/api/ready` (#40).
+- Versioned state backup/restore: automatic snapshots on start,
+  `POST /api/backup`, `GET /api/backup`, `--export-state`/`--import-state`
+  with manifest checksums (#30).
+- Configurable display geometry and DPI (`RD_GEOMETRY`, `RD_DPI`) with
+  last-client-size persistence (#31).
+- Transparent VNC proxy reconnect: Xvnc restarts no longer drop the
+  websocket; client frames are buffered and replayed in order (#39).
+- Connection caps (connections, websockets, audio streams, device-in
+  streams) with fast 503 + Retry-After overloads, idle timeouts and live
+  counts in `/api/stats` (#28).
+- WebSocket backpressure: bounded buffers, slow-client write deadlines,
+  frame caps and drop counters (#29).
+- End-to-end integration tests (HTTP, auth, websocket byte fidelity,
+  shutdown reaping) and a 40% coverage gate with a Python 3.10/3.12 CI
+  matrix (#34, #35).
+- Architecture decision records (docs/adr/), a benchmark script with a
+  performance budget doc, and pre-commit hooks in check-only mode (#36,
+  #37, #38).
+- webmanifest/json MIME mappings for the new PWA shell assets.
+
+### Fixed
+
+- session.sh PID handling: watchdog no longer double-starts, stale locks
+  are cleaned only when unowned, TERM/INT stops Xvnc and PulseAudio
+  cleanly (#32).
+- Graceful shutdown: SIGTERM stops the listener, closes clients, reaps
+  ffmpeg/VNC children with a bounded wait; second signal forces exit (#25).
+
+### Security
+
+- systemd units hardened: NoNewPrivileges, PrivateTmp, ProtectSystem=full,
+  ProtectHome=read-only with explicit ReadWritePaths, address-family
+  restrictions and NOFILE limits (#33).
 
 ## [2.0.1] — 2026-11-13
 

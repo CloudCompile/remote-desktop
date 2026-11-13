@@ -19,6 +19,8 @@ MIME = mimetypes.MimeTypes()
 MIME.add_type("application/javascript", ".js")
 MIME.add_type("application/wasm", ".wasm")
 MIME.add_type("image/svg+xml", ".svg")
+MIME.add_type("application/manifest+json", ".webmanifest")
+MIME.add_type("application/json", ".json")
 
 MAX_BODY = 1 << 20  # 1 MiB request bodies
 STREAM_PATHS = (
