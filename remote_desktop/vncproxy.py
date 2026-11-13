@@ -77,6 +77,11 @@ class _Pending:
         self.buf += data
         return True
 
+    def prepend(self, data):
+        """Put bytes back at the FRONT (push-back after a failed upstream
+        send, so a reconnect retries them first — order preserved)."""
+        self.buf[:0] = data
+
     def take(self):
         """Detach the whole buffer (reusing its allocation); None if empty."""
         if not self.buf:
@@ -133,6 +138,10 @@ def _pump(handler, target, c2s, c2c, c2s_lock, stop, last_activity):
             try:
                 target.sendall(up)
             except Exception:
+                # upstream died mid-send: push the bytes back so the
+                # reconnect sends them first — nothing is lost, order kept
+                with c2s_lock:
+                    c2s.prepend(up)
                 return "upstream"
             _bump("rx_bytes", len(up))
             last_activity[0] = time.time()
