@@ -1,0 +1,37 @@
+{
+  "collections": [
+    {
+      "id": "browsing",
+      "label": "Browsing & Chat",
+      "apps": [
+        {"pkg": "firefox", "label": "Firefox", "desc": "The Firefox web browser"},
+        {"pkg": "chromium", "label": "Chromium", "desc": "Open-source Chrome browser"},
+        {"pkg": "thunderbird", "label": "Thunderbird", "desc": "Mail, news and chat client"},
+        {"pkg": "pidgin", "label": "Pidgin", "desc": "Multi-protocol chat client"},
+        {"pkg": "filezilla", "label": "FileZilla", "desc": "FTP/SFTP client"}
+      ]
+    },
+    {
+      "id": "office",
+      "label": "Office & Writing",
+      "apps": [
+        {"pkg": "libreoffice", "label": "LibreOffice", "desc": "Full office suite"},
+        {"pkg": "gedit", "label": "gedit", "desc": "GNOME text editor"},
+        {"pkg": "evince", "label": "Evince", "desc": "PDF and document viewer"},
+        {"pkg": "okular", "label": "Okular", "desc": "KDE document viewer"},
+        {"pkg": "hugo", "label": "Hugo", "desc": "Static site generator (CLI)"}
+      ]
+    },
+    {
+      "id": "media",
+      "label": "Media & Graphics",
+      "apps": [
+        {"pkg": "vlc", "label": "VLC", "desc": "Plays everything media player"},
+        {"pkg": "gimp", "label": "GIMP", "desc": "GNU Image Manipulation Program"},
+        {"pkg": "inkscape", "label": "Inkscape", "desc": "Vector graphics editor"},
+        {"pkg": "audacity", "label": "Audacity", "desc": "Audio editor and recorder"},
+        {"pkg": "obs-studio", "label": "OBS Studio", "desc": "Streaming and recording studio"}
+      ]
+    }
+  ]
+}
