@@ -549,6 +549,15 @@ $('toastUndo').addEventListener('click', () => {
   if (u && u.fn) try { u.fn(); } catch (_) {}
 });
 
+/* iOS Safari (#57): Safari fires non-standard gesturestart/gesturechange
+   for two-finger pinch and zooms the PAGE unless prevented. The app owns
+   pinch (touch.js), so page-level gestures are always rejected. Rubber-
+   banding and double-tap zoom are covered by touch-action /
+   overscroll-behavior in the stylesheet and by the canvas touch-action:
+   none set in touch.js. */
+['gesturestart', 'gesturechange', 'gestureend'].forEach(ev =>
+  document.addEventListener(ev, e => e.preventDefault(), { passive: false }));
+
 /* ------------------------------------------------------------------ *
  *  Insets: keep the desktop out from under the Android nav bar        *
  * ------------------------------------------------------------------ */
