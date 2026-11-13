@@ -527,6 +527,11 @@ def main(argv=None):
             return 1
         print(f"config OK (port {config.PORT}, files {config.FILES_DIR}, vnc {config.VNC_HOST}:{config.VNC_PORT})")
         return 0
+    if "--gen-config-docs" in argv:
+        rest = argv[argv.index("--gen-config-docs") + 1 :]
+        path = rest[0] if rest and not rest[0].startswith("--") else None
+        print(config.write_env_doc(path), "written")
+        return 0
     if "--export-state" in argv:
         path = argv[argv.index("--export-state") + 1] if len(argv) > argv.index("--export-state") + 1 else ""
         if not path:
