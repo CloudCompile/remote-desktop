@@ -145,6 +145,14 @@
   .spin{width:28px;height:28px;border:3px solid #333;border-top-color:var(--accent);border-radius:50%;
         animation:sp 1s linear infinite}
   @keyframes sp{to{transform:rotate(360deg)}}
+
+  /* transient action overlay / undo toast (#44 #68) */
+  #toast{position:absolute;left:50%;bottom:calc(var(--ib) + 88px);transform:translateX(-50%);
+         z-index:40;display:flex;align-items:center;gap:10px;background:rgba(16,16,16,.95);
+         border:1px solid var(--line,#262626);border-radius:14px;padding:8px 14px;font-size:13px;
+         color:#eee;box-shadow:0 4px 18px rgba(0,0,0,.5);transition:opacity .25s}
+  #toast button{min-height:36px;border:0;border-radius:9px;background:var(--accent);color:var(--accent-fg,#fff);
+                font-size:12px;padding:0 12px;font-weight:600}
 </style>
 </head>
 <body>
@@ -158,6 +166,7 @@
     <button id="bApps"><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg>Apps</button>
     <button id="bStore"><svg viewBox="0 0 24 24"><path d="M7 18a2 2 0 100 4 2 2 0 000-4zm10 0a2 2 0 100 4 2 2 0 000-4zM7.2 14h9.6c.75 0 1.4-.4 1.7-1.1l3.3-6.9-1.8-.9L16.8 12H7.3L4.3 4H1v2h2l3.6 7.6-1.4 2.5C4.5 17.4 5.5 19 7 19h12v-2H7.2l1-2z"/></svg>Store</button>
     <button id="bKeys"><svg viewBox="0 0 24 24"><path d="M2 6v12h20V6H2zm18 10h-6v-2h6v2zM4 8h3v2H4V8zm4 0h3v2H8V8zm4 0h3v2h-3V8zm4 0h3v2h-3V8zM4 12h3v2H4v-2zm4 0h11v2H8v-2z"/></svg>Keys</button>
+    <button id="bTouch" aria-label="Toggle direct touch" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M9 11.2V6a1.8 1.8 0 013.6 0v5l1.3.3 4.4 1.5a2 2 0 011.3 2.3l-.8 3.7a2 2 0 01-2 1.6h-5.1a2 2 0 01-1.4-.6L6 15.4a1.6 1.6 0 012.2-2.3l.8.6V11.2z"/></svg><span>Touch</span></button>
     <button id="bAudio"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0014 8v8a4.5 4.5 0 002.5 4 4.5 4.5 0 000-8z"/></svg>Audio</button>
     <button id="bFiles"><svg viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>Files</button>
     <button id="bFull"><svg viewBox="0 0 24 24"><path d="M4 4h6v2H6v4H4V4zm10 0h6v6h-2V6h-4V4zM4 14h2v4h4v2H4v-6zm14 0h2v6h-6v-2h4v-6z"/></svg>Full</button>
@@ -230,6 +239,19 @@
       <button id="matchBtn" class="primary">Match desktop to screen</button>
     </div>
     <div class="row">
+      <div class="seg" id="vpSeg" role="group" aria-label="Viewport mode">
+        <button type="button" data-mode="fit" class="on">Fit</button>
+        <button type="button" data-mode="fill">Fill</button>
+        <button type="button" data-mode="one">1:1</button>
+        <button type="button" data-mode="remote">Remote</button>
+      </div>
+    </div>
+    <div class="row">
+      <button id="vpReset" aria-label="Reset zoom">Reset zoom</button>
+      <span class="val" id="zoomVal">100%</span>
+    </div>
+    <div class="row"><label id="vpScale"></label></div>
+    <div class="row">
       <label>Desktop width (text size)</label>
       <select id="dw">
         <option value="0">Auto</option>
@@ -286,6 +308,11 @@
     <button id="ovBtn" style="display:none">Reconnect</button>
     <div id="ovText" style="font-size:12px;color:#777">Connecting…</div>
   </div>
+
+  <div id="toast" hidden role="status">
+    <span id="toastMsg"></span>
+    <button id="toastUndo" hidden>Undo</button>
+  </div>
 </div>
 
 <script type="module">
@@ -314,6 +341,33 @@ function status(t, err){
   statusTimer = setTimeout(() => statusEl.classList.remove('show'), 4000);
   $('ovText').textContent = t;
 }
+
+/* i18n helper — populated by the localization layer (#54); until then the
+   English fallback text is used everywhere. */
+function i18nT(key, fallback){ return fallback ?? key; }
+
+/* Transient action overlay: names the gesture that fired (#44) and carries
+   an optional undo button for destructive taps (#68). */
+let toastTimer = null, toastUndo = null;
+function toast(msg, action){
+  const el = $('toast');
+  if (!el) return;
+  $('toastMsg').textContent = msg;
+  const undo = $('toastUndo');
+  toastUndo = action && action.fn ? action : null;
+  undo.hidden = !toastUndo;
+  el.hidden = false;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.classList.remove('show'); setTimeout(() => { el.hidden = true; }, 250); }, 3500);
+}
+$('toastUndo').addEventListener('click', () => {
+  const u = toastUndo;
+  toastUndo = null;
+  $('toast').classList.remove('show');
+  $('toast').hidden = true;
+  if (u && u.fn) try { u.fn(); } catch (_) {}
+});
 
 /* ------------------------------------------------------------------ *
  *  Insets: keep the desktop out from under the Android nav bar        *
@@ -391,6 +445,9 @@ function targetSize(){
 let lastApiSize = '';
 async function matchDesktop(force){
   if (!rfb) return;
+  // Only remote-resize mode may change the desktop size (#43); local fit /
+  // fill / 1:1 modes are purely client-side scaling.
+  if (store.get('vpMode', 'fit') !== 'remote') return;
   const t = targetSize();
   if (rfb._supportsSetDesktopSize) {
     rfb._requestRemoteResize();
@@ -411,7 +468,49 @@ async function matchDesktop(force){
 function relayout(){
   applyInsets();
   if (rfb) { clearTimeout(relayout.t); relayout.t = setTimeout(() => matchDesktop(false), 400); }
+  updateVpInfo();
 }
+
+/* ------------------------------------------------------------------ *
+ *  Viewport modes (#43): fit / fill / 1:1 / remote-resize             *
+ * ------------------------------------------------------------------ */
+function vpMode(){ return store.get('vpMode', 'fit'); }
+function paintVpSeg(){
+  document.querySelectorAll('#vpSeg button').forEach(b => {
+    const on = b.dataset.mode === vpMode();
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+}
+function updateVpInfo(){
+  const z = (window.__touch && window.__touch.getZoom) ? window.__touch.getZoom() : 1;
+  if ($('zoomVal')) $('zoomVal').textContent = Math.round(z * 100) + '%';
+  try {
+    const d = rfb._display, fbw = d._fbWidth, fbh = d._fbHeight;
+    const r = rfb._canvas.getBoundingClientRect();
+    const eff = r.width / Math.max(1, fbw);
+    const stretched = Math.abs((r.width / Math.max(1, r.height)) - (fbw / Math.max(1, fbh))) > 0.02;
+    $('vpScale').textContent = `fb ${fbw}×${fbh} · on-screen ${Math.round(eff * 100)}% · ` +
+      (stretched ? 'stretched' : 'aspect preserved') + ` · ${vpMode()}`;
+  } catch (_) { if ($('vpScale')) $('vpScale').textContent = ''; }
+}
+function applyVpMode(){
+  paintVpSeg();
+  if (!rfb) return;
+  const m = vpMode();
+  rfb.scaleViewport = m !== 'one';       // 1:1 shows native pixels unscaled
+  rfb.clipViewport = m === 'one';
+  rfb.resizeSession = m === 'remote';    // only remote-resize may change the desktop
+  if (window.__touch && window.__touch.setVpMode) window.__touch.setVpMode(m);
+  updateVpInfo();
+  if (m === 'remote') matchDesktop(true);
+}
+document.querySelectorAll('#vpSeg button').forEach(b =>
+  b.addEventListener('click', () => { store.set('vpMode', b.dataset.mode); applyVpMode(); }));
+$('vpReset').addEventListener('click', () => {
+  if (window.__touch && window.__touch.resetZoom) window.__touch.resetZoom();
+  updateVpInfo();
+});
 
 /* ------------------------------------------------------------------ *
  *  Connect with automatic reconnect (no page reload)                  *
@@ -438,9 +537,7 @@ function connect(){
 
   rfb = new RFB(screenEl, wsUrl, { credentials: { password: wsPassword } });
   window.rfb = rfb;
-  rfb.scaleViewport = true;
-  rfb.clipViewport = false;
-  rfb.resizeSession = true;
+  applyVpMode();                    // scaleViewport / clipViewport / resizeSession per mode (#43)
   rfb.qualityLevel = parseInt(store.get('quality', '6'), 10);
 
   // custom resize: keep the remote desktop the same proportions as the visible area
@@ -458,7 +555,9 @@ function connect(){
     status('Connected');
     if (touchReady && window.__touch?.setRfb) window.__touch.setRfb(rfb);  // re-bind touch layer
     else initTouchOnce();
-    setTimeout(() => matchDesktop(true), 1200);
+    applyVpMode();
+    paintTouchBtn();
+    setTimeout(() => { applyVpMode(); matchDesktop(true); }, 1200);
     requestWakeLock();
   });
   rfb.addEventListener('disconnect', e => {
@@ -477,7 +576,7 @@ function connect(){
   });
   rfb.addEventListener('credentialsrequired', () =>
     rfb.sendCredentials({ password: prompt('Password required:') }));
-  rfb.addEventListener('desktopname', e => { document.title = 'Remote – ' + e.detail.name; });
+  rfb.addEventListener('desktopname', e => { document.title = 'Remote – ' + e.detail.name; updateVpInfo(); });
   rfb.addEventListener('clipboard', e => {
     if (e.detail.text) { try { navigator.clipboard.writeText(e.detail.text).catch(() => {}); } catch(_) {} }
   });
@@ -497,10 +596,26 @@ function initTouchOnce(){
       rfb, screenEl, appEl, status, $,
       menu: $('shMore'),           // touch settings get appended to the More sheet
       keyboardButton: $('bKeys'),  // toolbar button toggles the mobile keyboard
+      t: key => i18nT(key),        // localized labels for touch settings (#54)
+      vpInfo: updateVpInfo,        // keep the zoom indicator live (#42)
+      onModeChange: paintTouchBtn, // sync the toolbar toggle (#41)
+      actionToast: toast,          // transient gesture overlay (#44)
     });
     touchReady = true;
   } catch (e) { console.warn('touch init failed', e); }
 }
+
+/* ------------------------------------------------------------------ *
+ *  Direct-touch toolbar toggle (#41)                                  *
+ * ------------------------------------------------------------------ */
+function paintTouchBtn(){
+  const direct = !!(window.__touch && window.__touch.settings && window.__touch.settings.mode === 'direct');
+  $('bTouch').classList.toggle('on', direct);
+  $('bTouch').setAttribute('aria-pressed', direct ? 'true' : 'false');
+}
+$('bTouch').addEventListener('click', () => {
+  if (window.__touch && window.__touch.toggleMode) window.__touch.toggleMode();
+});
 
 /* ------------------------------------------------------------------ *
  *  Wake lock: keep the phone screen on while connected                *
