@@ -155,7 +155,11 @@ Tailscale Funnel URL when present.
 
 ## Configuration
 
-Environment variables (all optional):
+The full environment table is **generated from the config schema**
+([docs/CONFIGURATION.md](docs/CONFIGURATION.md), issue #23) — every
+`RD_*`/`VNC_*` setting with type, default and meaning, plus
+`python3 control.py --check-config` to validate a deployment before
+starting it. The main ones:
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -167,6 +171,9 @@ Environment variables (all optional):
 | `RD_FILES_DIR` | `~/Downloads` | Upload/download directory |
 | `VNC_HOST` | `127.0.0.1` | VNC host |
 | `VNC_PORT` | `5901` | VNC port |
+| `RD_GEOMETRY` / `RD_DPI` | `1280x800` / `96` | Desktop geometry and font DPI (session start) |
+| `RD_LOG_LEVEL` / `RD_LOG_FORMAT` | `INFO` / `text` | Log level and record style (`text`/`json`) |
+| `RD_MAX_CONNECTIONS` / `RD_MAX_AUDIO` / `RD_MAX_MEDIA_IN` | `64` / `8` / `2` | Concurrency caps (#28) |
 
 Runtime state (not committed): `.pins.json`, `.cliphistory.json`,
 `.passhash`, `__pycache__/`.

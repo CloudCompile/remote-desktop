@@ -8,3 +8,16 @@ exclude = ["web/vendor", "web/core"]
 # Error classes + pyflakes only; the single-file server uses module-level
 # globals intentionally, so unused-import/variable noise stays off.
 select = ["E9", "F63", "F7", "F82"]
+
+# Coverage gate (#35): 40% initial floor. parallel=true lets the
+# integration tests' SERVER SUBPROCESS report its own coverage (the
+# tests set COVERAGE_PROCESS_START; pytest-cov combines the data files).
+[tool.coverage.run]
+source = ["remote_desktop"]
+branch = true
+parallel = true
+sigterm = true
+
+[tool.coverage.report]
+fail_under = 40
+show_missing = true

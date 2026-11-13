@@ -1,3 +1,6 @@
+# VNC/X session watchdog: keeps Xvnc (:1) and PulseAudio alive (#32).
+# Sandboxed conservatively — Xvnc and PulseAudio need broader access than
+# the control server (see docs/DEPLOYMENT.md).
 [Unit]
 Description=Remote desktop VNC session watchdog (Xvnc :1 + PulseAudio)
 After=network.target
@@ -6,9 +9,19 @@ After=network.target
 Type=simple
 User=YOUR_USER
 WorkingDirectory=/opt/remote-desktop
+Environment=RD_DISPLAY=:1
+Environment=RD_GEOMETRY=1280x800
+Environment=RD_DPI=96
 ExecStart=/bin/sh /opt/remote-desktop/session.sh
 Restart=always
 RestartSec=5
+TimeoutStopSec=15
+# session.sh traps TERM/INT and stops Xvnc + PulseAudio itself (#32)
+KillMode=process
+LimitNOFILE=8192
+# Xvnc writes /tmp/.X11-unix sockets, lock files and ~/.vnc; PulseAudio
+# uses $XDG_RUNTIME_DIR. Keep these writable:
+ReadWritePaths=/tmp/.X11-unix %h/.vnc %h/.local/share/remote-desktop
 
 [Install]
 WantedBy=multi-user.target
