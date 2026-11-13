@@ -1,6 +1,11 @@
 """Tests for control.py helpers (#11). Imports control.py as a module —
 importing has no side effects beyond config parsing; the server only starts
-in main()."""
+in main().
+
+Since #22 the implementation lives in the remote_desktop package and
+`control` is a re-export shim. Tests patch mutable state on the OWNING
+submodule (rd_auth/rd_files/rd_clipboard) so the functions see the patched
+values; `control.<name>` still works for reads and plain functions."""
 import base64
 import hashlib
 import io
@@ -12,6 +17,9 @@ import time
 import pytest
 
 import control
+from remote_desktop import auth as rd_auth
+from remote_desktop import clipboard as rd_clipboard
+from remote_desktop import files as rd_files
 
 
 # ---------------------------------------------------------------- tokens
@@ -20,12 +28,12 @@ import control
 def auth(monkeypatch):
     """A configured password so token tests pass even where .passhash is
     absent (CI). Recomputes SECRET the same way main() does."""
-    monkeypatch.setattr(control, "PASS_HASH",
+    monkeypatch.setattr(rd_auth, "PASS_HASH",
                         "$6$rounds=1000$salt$" +
                         control.hashlib.sha256(b"x").hexdigest())
-    monkeypatch.setattr(control, "SECRET",
+    monkeypatch.setattr(rd_auth, "SECRET",
                         control.hashlib.sha256(
-                            (control.PASS_HASH + "rd-secret-v2").encode()).digest())
+                            (rd_auth.PASS_HASH + "rd-secret-v2").encode()).digest())
 
 
 def test_token_roundtrip(auth):
@@ -67,12 +75,12 @@ def test_token_garbage():
 # ---------------------------------------------------------------- file paths
 
 def test_safe_file_path_accepts_plain_names(tmp_path, monkeypatch):
-    monkeypatch.setattr(control, "FILES_DIR", str(tmp_path))
+    monkeypatch.setattr(rd_files, "FILES_DIR", str(tmp_path))
     assert control._safe_file_path("hello.txt") == os.path.join(str(tmp_path), "hello.txt")
 
 
 def test_safe_file_path_rejects_traversal(tmp_path, monkeypatch):
-    monkeypatch.setattr(control, "FILES_DIR", str(tmp_path))
+    monkeypatch.setattr(rd_files, "FILES_DIR", str(tmp_path))
     # directory components are stripped (basename sanitisation), never escaped
     for evil in ("../etc/passwd", "a/b", "..", "..\\..\\x"):
         p = control._safe_file_path(evil)
@@ -82,7 +90,7 @@ def test_safe_file_path_rejects_traversal(tmp_path, monkeypatch):
 
 
 def test_safe_file_path_rejects_hidden(tmp_path, monkeypatch):
-    monkeypatch.setattr(control, "FILES_DIR", str(tmp_path))
+    monkeypatch.setattr(rd_files, "FILES_DIR", str(tmp_path))
     assert control._safe_file_path(".cliphistory.json") is None
 
 
@@ -167,24 +175,24 @@ def test_ws_16bit_and_64bit_lengths():
 
 @pytest.fixture
 def clip_file(tmp_path, monkeypatch):
-    monkeypatch.setattr(control, "CLIP_HISTORY_FILE", str(tmp_path / "hist.json"))
-    control._clip_history = []
+    monkeypatch.setattr(rd_clipboard, "CLIP_HISTORY_FILE", str(tmp_path / "hist.json"))
+    rd_clipboard._clip_history = []
     return tmp_path / "hist.json"
 
 
 def test_clip_roundtrip(clip_file):
     control.clip_add("first", "desktop")
     control.clip_add("second", "phone")
-    assert len(control._clip_history) == 2
-    control._clip_history = []          # simulate restart
+    assert len(rd_clipboard._clip_history) == 2
+    rd_clipboard._clip_history = []     # simulate restart
     control._clip_load()
-    assert [i["text"] for i in control._clip_history] == ["second", "first"]
+    assert [i["text"] for i in rd_clipboard._clip_history] == ["second", "first"]
 
 
 def test_clip_corrupt_quarantined(clip_file):
     clip_file.write_text("{not json")
     control._clip_load()
-    assert control._clip_history == []
+    assert rd_clipboard._clip_history == []
     assert list(clip_file.parent.glob("hist.json.corrupt-*"))
 
 
@@ -196,16 +204,16 @@ def test_clip_partial_corrupt_entries_skipped(clip_file):
         {"id": "a", "text": "dup", "time": 2, "source": "desktop"},  # dup id
     ]))
     control._clip_load()
-    assert [i["id"] for i in control._clip_history] == ["a"]
-    assert control._clip_history[0]["text"] == "ok"
+    assert [i["id"] for i in rd_clipboard._clip_history] == ["a"]
+    assert rd_clipboard._clip_history[0]["text"] == "ok"
 
 
 def test_clip_trim_to_max(clip_file, monkeypatch):
-    monkeypatch.setattr(control, "CLIP_HISTORY_MAX", 5)
+    monkeypatch.setattr(rd_clipboard, "CLIP_HISTORY_MAX", 5)
     for i in range(9):
         control.clip_add(f"item-{i}", "desktop")
-    assert len(control._clip_history) == 5
-    assert control._clip_history[0]["text"] == "item-8"
+    assert len(rd_clipboard._clip_history) == 5
+    assert rd_clipboard._clip_history[0]["text"] == "item-8"
 
 
 # ---------------------------------------------------------------- rate limit
@@ -246,12 +254,12 @@ def test_client_ip_trusted_proxy():
     class H:
         client_address = ("10.8.0.1", 4444)
         headers = {"X-Forwarded-For": "1.2.3.4, 10.8.0.1"}
-    old = control.TRUSTED_PROXIES
-    control.TRUSTED_PROXIES = {"10.8.0.1"}
+    old = rd_auth.TRUSTED_PROXIES
+    rd_auth.TRUSTED_PROXIES = {"10.8.0.1"}
     try:
         assert control._client_ip(H()) == "1.2.3.4"
     finally:
-        control.TRUSTED_PROXIES = old
+        rd_auth.TRUSTED_PROXIES = old
 
 
 # ---------------------------------------------------------------- misc
@@ -273,7 +281,7 @@ def test_cleanup_partial_uploads(tmp_path, monkeypatch):
     visible.write_bytes(b"x")
     old_age = time.time() - 48 * 3600
     os.utime(old, (old_age, old_age))
-    monkeypatch.setattr(control, "FILES_DIR", str(tmp_path))
+    monkeypatch.setattr(rd_files, "FILES_DIR", str(tmp_path))
     assert control.cleanup_partial_uploads(max_age=24 * 3600) == 1
     assert not old.exists()
     assert fresh.exists()
@@ -281,7 +289,7 @@ def test_cleanup_partial_uploads(tmp_path, monkeypatch):
 
 
 def test_list_files_hides_dotfiles(tmp_path, monkeypatch):
-    monkeypatch.setattr(control, "FILES_DIR", str(tmp_path))
+    monkeypatch.setattr(rd_files, "FILES_DIR", str(tmp_path))
     (tmp_path / "visible.txt").write_bytes(b"x")
     (tmp_path / ".upload-9-9.part").write_bytes(b"x")
     names = [f["name"] for f in control.list_files()]

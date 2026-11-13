@@ -20,13 +20,41 @@ browser (phone)                     host (Linux/X11)
           └── tunnel (Tailscale Funnel / Cloudflare) terminates TLS
 ```
 
-## Server (`control.py`)
+## Server (`control.py` → `remote_desktop/` package)
 
-Single Python file, standard library only.
+Single process, standard library only. Since #22, `control.py` is a thin
+entry point (`from remote_desktop.server import main`); the implementation
+lives in the `remote_desktop/` package:
+
+| Module | Owns |
+|---|---|
+| `config.py` | every `RD_*`/`VNC_*` setting: one schema, startup validation, generated docs ([CONFIGURATION.md](CONFIGURATION.md)) |
+| `log.py` | structured logging: levels, request ids, text/JSON, rotation to `/tmp/remote-control.log` |
+| `procs.py` | child-process registry (ffmpeg etc.) + subprocess helpers |
+| `auth.py` | cookie tokens, crypt password check, login rate limiting |
+| `http.py` | `BaseHandler` plumbing (JSON replies, request ids, body parsing) + static files |
+| `server.py` | routes, bounded `ThreadingHTTPServer`, graceful shutdown, CLI |
+| `ws.py` | RFC6455 primitives: frame reader/builder, upgrade handshake |
+| `vncproxy.py` | `/websockify`: websocket → VNC TCP with backpressure and reconnect ([ADR-0003](adr/ADR-0003-websocket-tcp-proxy-for-vnc.md)) |
+| `audio.py` | PulseAudio helpers, audio-out source discovery |
+| `media_in.py` | device-in websockets (desktop mic, webcam) |
+| `clipboard.py` | X clipboard access + persisted multi-item history |
+| `files.py` | upload/download directory, path sanitising |
+| `apps.py` | `.desktop` discovery, icons, launch-or-focus |
+| `store.py` | apt app-store search/install |
+| `windows.py` | xdotool window management, xrandr resize fallback |
+| `stats.py` | system stats + public `/api/health` snapshot |
+| `ready.py` | dependency readiness probes behind `/api/ready` |
+| `state.py` | pins, display state, versioned backups/export/import ([ADR-0005](adr/ADR-0005-file-backed-state.md)) |
+
+No module binds sockets, starts threads or touches X at import time;
+`python3 control.py` (or `from remote_desktop.server import main`) is the
+only way the server starts. Decisions behind this layout: [ADR-0001](adr/ADR-0001-single-process-one-port.md)
+(single process, one port), [ADR-0002](adr/ADR-0002-stdlib-only.md) (stdlib-only).
 
 | Area | Notes |
 |---|---|
-| HTTP | `ThreadingHTTPServer`; each request/websocket/audio stream gets a thread |
+| HTTP | `ThreadingHTTPServer` (bounded, #28); each request/websocket/audio stream gets a thread |
 | Auth | `.passhash` (crypt SHA-512) → HMAC-SHA256 cookie `rd_session`, 7-day TTL, `HttpOnly`, `SameSite=Lax`; 5 attempts / 10 min / IP |
 | Static | `web/`, path-traversal guarded; `/` redirects to `/login` |
 | Websocket | Minimal RFC6455 implementation: handshake, frame parse/build, proxies bytes to the VNC TCP socket both ways |
