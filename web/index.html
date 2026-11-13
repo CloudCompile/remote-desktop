@@ -97,6 +97,7 @@
   #bar button:active{background:var(--accent);color:var(--accent-fg)}
   #bar button svg{width:22px;height:22px;fill:currentColor}
   #bar button.on{background:var(--accent);color:var(--accent-fg)}
+  #bar button.bar-hidden{display:none}
   /* grab handle shown while the toolbar is hidden; tap to reveal */
   #barHandle{position:absolute;left:50%;bottom:calc(var(--ib) + var(--ikb,0px) + 8px);z-index:11;
              transform:translateX(-50%);display:flex;align-items:center;justify-content:center;gap:6px;
@@ -393,6 +394,10 @@
       <button id="orientBtn" aria-pressed="false">Lock landscape</button>
     </div>
     <div class="row"><label id="orientStatus"></label></div>
+    <hr>
+    <h3 data-i18n="more.toolbar">Toolbar</h3>
+    <div id="barCust"></div>
+    <div class="row"><button id="barReset" data-i18n="more.resetToolbar">Reset toolbar</button></div>
     <hr>
     <h3 data-i18n="more.edges">Screen edges</h3>
     <div class="row">
@@ -995,6 +1000,7 @@ $('bMore').addEventListener('click', () => {
   loadClipHistory();
   loadStats();
   updateConnBox();
+  paintBarCust();
   if (typeof clipPollStart === 'function') clipPollStart();
   if (statsTimer) clearInterval(statsTimer);
   statsTimer = setInterval(() => { loadStats(); updateConnBox(); }, 3000);
@@ -2004,6 +2010,114 @@ $('tourSkip').addEventListener('click', endTour);
 $('tourReplay').addEventListener('click', () => { closeSheets(); showTour(); });
 $('tour').addEventListener('click', e => { if (e.target.id === 'tour') endTour(); });
 if (!store.get('tour', '')) setTimeout(showTour, 2500);
+
+/* ------------------------------------------------------------------ *
+ *  Toolbar customization (#68): reorder, hide, restore                *
+ * ------------------------------------------------------------------ */
+const BAR_DEFAULT = ['bApps', 'bStore', 'bKeys', 'bTouch', 'bAudio', 'bFiles', 'bFull', 'bMore'];
+const BAR_LABELS = { bApps: 'bar.apps', bStore: 'bar.store', bKeys: 'bar.keys', bTouch: 'bar.touch',
+                     bAudio: 'bar.audio', bFiles: 'bar.files', bFull: 'bar.full', bMore: 'bar.more' };
+function loadBarOrder(){
+  let order;
+  try { order = JSON.parse(store.get('barOrder', '') || 'null'); } catch (_) { order = null; }
+  if (!Array.isArray(order)) order = [];
+  order = order.filter(id => BAR_DEFAULT.includes(id));
+  for (const id of BAR_DEFAULT) if (!order.includes(id)) order.push(id);
+  return order;
+}
+function loadBarHidden(){
+  let hidden;
+  try { hidden = JSON.parse(store.get('barHidden', '') || 'null'); } catch (_) { hidden = null; }
+  if (!Array.isArray(hidden)) hidden = [];
+  // bMore can never be hidden: it is the recovery path into settings
+  return hidden.filter(id => BAR_DEFAULT.includes(id) && id !== 'bMore');
+}
+let barOrder = loadBarOrder();
+let barHidden = loadBarHidden();
+function saveBar(){
+  store.set('barOrder', JSON.stringify(barOrder));
+  store.set('barHidden', JSON.stringify(barHidden));
+}
+function paintBar(){
+  const bar = $('bar');
+  for (const id of barOrder) { const b = $(id); if (b) bar.appendChild(b); }   // move keeps listeners
+  for (const id of barOrder) {
+    const b = $(id); if (!b) continue;
+    b.classList.toggle('bar-hidden', id !== 'bMore' && barHidden.includes(id));
+  }
+}
+function paintBarCust(){
+  const box = $('barCust');
+  if (!box) return;
+  box.textContent = '';
+  barOrder.forEach((id, i) => {
+    const row = document.createElement('div');
+    row.className = 'strow';
+    const nm = document.createElement('div');
+    nm.className = 'nm';
+    nm.textContent = i18nT(BAR_LABELS[id], id);
+    row.appendChild(nm);
+    const up = document.createElement('button');
+    up.textContent = '↑'; up.setAttribute('aria-label', 'Move ' + nm.textContent + ' up');
+    up.disabled = i === 0;
+    up.addEventListener('click', () => {
+      [barOrder[i - 1], barOrder[i]] = [barOrder[i], barOrder[i - 1]];
+      saveBar(); paintBar(); paintBarCust();
+    });
+    const down = document.createElement('button');
+    down.textContent = '↓'; down.setAttribute('aria-label', 'Move ' + nm.textContent + ' down');
+    down.disabled = i === barOrder.length - 1;
+    down.addEventListener('click', () => {
+      [barOrder[i + 1], barOrder[i]] = [barOrder[i], barOrder[i + 1]];
+      saveBar(); paintBar(); paintBarCust();
+    });
+    const cb = document.createElement('div');
+    cb.className = 'check';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = !(id !== 'bMore' && barHidden.includes(id));
+    input.disabled = id === 'bMore';   // at least one launcher stays reachable
+    input.setAttribute('aria-label', 'Show ' + nm.textContent);
+    input.addEventListener('change', e => {
+      barHidden = barHidden.filter(x => x !== id);
+      if (!e.target.checked) barHidden.push(id);
+      saveBar(); paintBar();
+    });
+    cb.appendChild(input);
+    row.appendChild(up); row.appendChild(down); row.appendChild(cb);
+    box.appendChild(row);
+  });
+}
+$('barReset').addEventListener('click', () => {
+  barOrder = BAR_DEFAULT.slice();
+  barHidden = [];
+  saveBar(); paintBar(); paintBarCust();
+  status('Toolbar restored');
+});
+// hide by long-pressing a toolbar button, with an undo toast (#68)
+let barLongFired = false;
+$('bar').addEventListener('click', e => {
+  if (barLongFired) { e.stopPropagation(); e.preventDefault(); barLongFired = false; }
+}, true);
+for (const id of BAR_DEFAULT) {
+  const b = $(id);
+  let lp = null;
+  b.addEventListener('pointerdown', () => {
+    lp = setTimeout(() => {
+      if (id === 'bMore') return;             // always keep a way back
+      barLongFired = true;
+      barHidden.push(id);
+      saveBar(); paintBar();
+      toast(i18nT(BAR_LABELS[id], id) + ' hidden', {
+        label: 'Undo',
+        fn: () => { barHidden = barHidden.filter(x => x !== id); saveBar(); paintBar(); },
+      });
+    }, 600);
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev =>
+    b.addEventListener(ev, () => clearTimeout(lp)));
+}
+paintBar();
 
 applyInsets();
 connect();
