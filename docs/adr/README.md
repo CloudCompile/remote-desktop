@@ -12,3 +12,4 @@ reused.
 | [ADR-0003](ADR-0003-websocket-tcp-proxy-for-vnc.md) | WebSocket→TCP proxy for VNC | Accepted |
 | [ADR-0004](ADR-0004-vendored-novnc-client.md) | Vendored noVNC client | Accepted |
 | [ADR-0005](ADR-0005-file-backed-state.md) | File-backed runtime state | Accepted |
+| [ADR-0006](ADR-0006-webrtc-media-transport.md) | WebRTC as the media transport: no-go for v2.x (#104) | Accepted |
