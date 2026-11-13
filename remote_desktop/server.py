@@ -179,11 +179,44 @@ class Handler(http.BaseHandler):
                 return self._json(200, {"ok": True})
             if path == "/api/windows":
                 try:
-                    return self._json(200, {"ok": True, "windows": windows.list_windows()})
+                    return self._json(200, {"ok": True, "wm": windows.wm_name(), "windows": windows.list_windows()})
                 except Exception as e:
                     return self._json(200, {"ok": False, "error": str(e)})
-            if path == "/api/apps":
-                return self._json(200, {"apps": apps.list_desktop_apps()})
+            if path == "/api/window/thumbnail":  # #59: single-frame JPEG of one window
+                hid = parse_qs(url.query).get("hid", [""])[0]
+                data, err = windows.window_thumbnail(hid)
+                if data is None:
+                    return self._json(502, {"ok": False, "error": err or "thumbnail unavailable"})
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                if not getattr(self, "_head_only", False):
+                    self.wfile.write(data)
+                return
+            if path == "/api/apps":  # #77: ETag + If-None-Match -> 304
+                body, etag = apps.apps_response()
+                if self.headers.get("If-None-Match") == etag:
+                    self.send_response(304)
+                    self.send_header("ETag", etag)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("ETag", etag)
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("X-Request-Id", getattr(self, "rid", "-") or "-")
+                self.end_headers()
+                if not getattr(self, "_head_only", False):
+                    self.wfile.write(body)
+                return
+            if path == "/api/store/backend":  # #67: detected backend + capabilities
+                return self._json(200, {"ok": True, **store.backend_info()})
+            if path == "/api/store/collections":  # #69: curated collections
+                return self._json(200, {"ok": True, "collections": store.collections_with_status()})
             if path == "/api/store":
                 return self._json(
                     200, {"apps": [{**a, "installed": store.is_installed(a["pkg"])} for a in apps.APP_CATALOG]}
@@ -203,8 +236,34 @@ class Handler(http.BaseHandler):
                 return self._json(200, audio.audio_status())
             if path == "/api/clipboard":
                 return self._json(200, clipboard.clipboard_get())
-            if path == "/api/clipboard/history":
-                return self._json(200, {"items": clipboard.clip_history()})
+            if path == "/api/clipboard/history":  # #70: q= full-text search, tag= filter
+                q = parse_qs(url.query)
+                items = clipboard.clip_history(q.get("q", [None])[0], q.get("tag", [None])[0])
+                return self._json(200, {"items": items, "tags": clipboard.clip_tags()})
+            if path == "/api/clipboard/sync":  # #72: desktop -> phone push (opt-in)
+                since = parse_qs(url.query).get("since", [""])[0][:64]
+                return self._json(200, clipboard.clip_sync(since))
+            if path == "/api/clipboard/image":  # #71: serve a stored image
+                it = clipboard.clip_item(parse_qs(url.query).get("id", [""])[0])
+                p = clipboard.clip_image_path(it["id"]) if it else None
+                if not p:
+                    return self._json(404, {"ok": False, "error": "no such image"})
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(os.path.getsize(p)))
+                self.send_header("Content-Disposition", f'attachment; filename="clip-{it["id"]}.png"')
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                if not getattr(self, "_head_only", False):
+                    with open(p, "rb") as f:
+                        shutil.copyfileobj(f, self.wfile)
+                return
+            if path == "/api/settings":  # #72/#76: opt-in toggles
+                return self._json(200, {"ok": True, "settings": state.load_settings()})
+            if path == "/api/custom-apps":  # #63
+                return self._json(200, {"ok": True, "apps": apps.list_custom_apps()})
+            if path == "/api/pins":  # #64: pins + folders ("Unfiled" virtual)
+                return self._json(200, {"ok": True, **state.pins_snapshot()})
             if path == "/api/audio/test":
                 sink = audio._pa("get-default-sink") or "remote_out"
                 procs.run_detached(
@@ -312,6 +371,27 @@ class Handler(http.BaseHandler):
         try:
             if path == "/api/fit":
                 return self._json(200, {"ok": True, "windows": windows.fit_windows()})
+            if path == "/api/window/action":  # #60/#61: close|minimize|maximize|restore|move|resize|layout|focus
+                d = self._body()
+                r = windows.window_action(
+                    d.get("hid"),
+                    d.get("action", ""),
+                    x=d.get("x"),
+                    y=d.get("y"),
+                    w=d.get("w"),
+                    h=d.get("h"),
+                    slot=d.get("slot"),
+                )
+                return self._json(200 if r.get("ok") else 400, {"ok": r.get("ok", False), **r})
+            if path == "/api/geometry":  # #76: toggle / reset per-app geometry remembering
+                d = self._body()
+                return self._json(200, {"ok": True, **windows.geometry_settings(d.get("enabled"), bool(d.get("reset")))})
+            if path == "/api/settings":  # #72/#76: opt-in toggles
+                d = self._body()
+                r = state.save_setting(str(d.get("key", "")), d.get("value"))
+                if r is None:
+                    return self._json(400, {"ok": False, "error": "unknown setting or non-boolean value"})
+                return self._json(200, {"ok": True, "settings": r})
             if path.startswith("/api/resize"):
                 q = parse_qs(url.query)
                 result = windows.resize_display(q["w"][0], q["h"][0])
@@ -337,7 +417,19 @@ class Handler(http.BaseHandler):
                 it = clipboard.clip_item(data.get("id", ""))
                 if not it:
                     return self._json(404, {"ok": False, "error": "no such clipboard item"})
+                if it.get("kind") == "image":  # #71: paste images back
+                    return self._json(200, clipboard.clipboard_set_image(it))
                 return self._json(200, clipboard.clipboard_set(it["text"]))
+            if path == "/api/clipboard/pin":  # #70
+                d = self._body()
+                if not clipboard.clip_pin(d.get("id", ""), bool(d.get("pinned"))):
+                    return self._json(404, {"ok": False, "error": "no such clipboard item"})
+                return self._json(200, {"ok": True})
+            if path == "/api/clipboard/tag":  # #70
+                d = self._body()
+                if not clipboard.clip_tag(d.get("id", ""), d.get("tags", [])):
+                    return self._json(404, {"ok": False, "error": "no such clipboard item"})
+                return self._json(200, {"ok": True, "tags": clipboard.clip_tags()})
             if path == "/api/clipboard/item":
                 it = clipboard.clip_item(parse_qs(url.query).get("id", [""])[0])
                 if not it:
@@ -347,7 +439,7 @@ class Handler(http.BaseHandler):
                 clipboard.clip_remove(self._body().get("id", ""))
                 return self._json(200, {"ok": True})
             if path == "/api/clipboard/clear":
-                clipboard.clip_clear()
+                clipboard.clip_clear(keep_pinned=True)  # #70: bulk clear preserves pins
                 return self._json(200, {"ok": True})
             if path == "/api/store/install":
                 data = self._body()
@@ -355,14 +447,61 @@ class Handler(http.BaseHandler):
                 if not store.valid_pkg_name(pkg):
                     return self._json(400, {"ok": False, "error": "invalid package name"})
                 return self._json(200, store.install_pkg(pkg))
+            if path == "/api/store/remove":  # #66
+                data = self._body()
+                pkg = data.get("pkg", "")
+                if not store.valid_pkg_name(pkg):
+                    return self._json(400, {"ok": False, "error": "invalid package name"})
+                return self._json(200, store.remove_pkg(pkg))
+            if path == "/api/store/update":  # #66
+                data = self._body()
+                pkg = data.get("pkg", "")
+                if not store.valid_pkg_name(pkg):
+                    return self._json(400, {"ok": False, "error": "invalid package name"})
+                return self._json(200, store.update_pkg(pkg))
+            if path == "/api/store/cancel":  # #66
+                data = self._body()
+                pkg = data.get("pkg", "")
+                if not store.valid_pkg_name(pkg):
+                    return self._json(400, {"ok": False, "error": "invalid package name"})
+                return self._json(200, store.cancel_pkg(pkg))
+            if path == "/api/custom-apps":  # #63: create/update a custom entry
+                r = apps.add_custom_app(self._body())
+                return self._json(200 if r.get("ok") else 400, r)
+            if path == "/api/pins/folder":  # #64
+                r = state.pins_folder_create(self._body().get("name", ""))
+                if r.get("error"):
+                    return self._json(400, {"ok": False, **r})
+                return self._json(200, {"ok": True, **r})
+            if path == "/api/pins/assign":  # #64: a pin lives in at most one folder
+                d = self._body()
+                r = state.pins_assign(d.get("id", ""), d.get("folder", ""))
+                if r.get("error"):
+                    return self._json(400, {"ok": False, **r})
+                return self._json(200, {"ok": True, **r})
+            if path == "/api/pins/reorder":  # #64
+                r = state.pins_reorder(self._body().get("ids", []))
+                if r is None:
+                    return self._json(400, {"ok": False, "error": "ids must be a list"})
+                return self._json(200, {"ok": True, **r})
+            if path == "/api/launches/clear":  # #62: clear history, keep pins + apps
+                state.clear_launches()
+                apps._apps_cache.update({"fp": None, "etag": None, "body": b""})
+                return self._json(200, {"ok": True})
             if path == "/api/launch":
                 data = self._body()
                 app_id = data.get("id", "")
                 if not app_id or len(app_id) > 200 or ".." in app_id or app_id.startswith("/"):
                     return self._json(400, {"ok": False, "error": "invalid app id"})
-                return self._json(200, apps.launch_desktop(app_id))
+                r = apps.launch_desktop(app_id)
+                if not r.get("ok"):
+                    r["rid"] = self.rid  # #75: correlation id for the log lookup
+                return self._json(200, r)
             if path == "/api/store/launch":
-                return self._json(200, apps.self_launch_name(self._body().get("name", "")))
+                r = apps.self_launch_name(self._body().get("name", ""))
+                if not r.get("ok"):
+                    r["rid"] = self.rid  # #75
+                return self._json(200, r)
             if path == "/api/upload":
                 return self._upload(url)
             if path == "/api/files/delete":
@@ -392,6 +531,24 @@ class Handler(http.BaseHandler):
             return self._json(400, {"ok": False, "error": str(e)})
         except Exception as e:
             log.log(f"POST {path} error: {e}")
+            return self._json(500, {"ok": False, "error": str(e)})
+
+    # ---- DELETE (#63/#64): custom apps and pin folders
+    def do_DELETE(self):
+        self._new_request_id()
+        url = urlparse(self.path)
+        path = url.path
+        if not self._authed():
+            return self._json(401, {"ok": False, "error": "unauthorized"})
+        try:
+            if path == "/api/custom-apps":  # #63
+                r = apps.delete_custom_app(parse_qs(url.query).get("id", [""])[0])
+                return self._json(200 if r.get("ok") else 404, r)
+            if path == "/api/pins/folder":  # #64: pins stay pinned under Unfiled
+                return self._json(200, {"ok": True, **state.pins_folder_delete(parse_qs(url.query).get("name", [""])[0])})
+            return self._json(404, {"error": "not found"})
+        except Exception as e:
+            log.log(f"DELETE {path} error: {e}")
             return self._json(500, {"ok": False, "error": str(e)})
 
     def _upload(self, url):
@@ -462,12 +619,39 @@ class Handler(http.BaseHandler):
         return apps.launch_desktop(name)
 
     def _paste(self):
-        text = self._body().get("text", "")
+        """Paste into the focused window (#74): mode "keys" types via
+        xdotool (reliable fallback), mode "clipboard" puts the text on the
+        X clipboard and sends Ctrl+V (fast, preserves formatting)."""
+        data = self._body()
+        text = data.get("text", "")
+        mode = data.get("mode", "keys")
         if not text:
             return self._json(200, {"ok": True})
         if len(text) > 100_000:
             return self._json(400, {"ok": False, "error": "text too long"})
-        rc, _, err = procs._run(["xdotool", "type", "--clearmodifiers", "--delay", "3", text], timeout=30)
+        if mode == "clipboard":
+            r = clipboard.clipboard_set(text)
+            if not r.get("ok"):
+                return self._json(500, {"ok": False, "error": "could not set the X clipboard"})
+            rc, _, err = procs._run(["xdotool", "key", "--clearmodifiers", "ctrl+v"], timeout=10)
+            return self._json(
+                200 if rc == 0 else 500, {"ok": rc == 0, "error": None if rc == 0 else err[:200]}
+            )
+        # keys mode (default): type it out; very large text is refused with
+        # an actionable alternative (#74)
+        if len(text) > 5000:
+            return self._json(
+                400,
+                {
+                    "ok": False,
+                    "error": f"text too large to type ({len(text)} chars; limit 5000)",
+                    "hint": "use mode 'clipboard' (or the Paste via clipboard button) instead",
+                },
+            )
+        timeout = 15 + int(len(text) * 0.02)  # 12 ms per char + margin
+        rc, _, err = procs._run(
+            ["xdotool", "type", "--clearmodifiers", "--delay", "12", text], timeout=timeout
+        )
         return self._json(200 if rc == 0 else 500, {"ok": rc == 0, "error": None if rc == 0 else err[:200]})
 
     def _login(self):
@@ -566,6 +750,7 @@ def main(argv=None):
     state.snapshot("startup")  # 30: versioned backup of runtime state
     clipboard._clip_load()
     files.cleanup_partial_uploads()
+    store.restore_jobs()  # #66: job status survives a restart
     clipboard.prime_watcher()
     threading.Thread(target=clipboard.clipboard_watcher, daemon=True).start()
 
