@@ -22,12 +22,12 @@ Make a real desktop usable from a phone or tablet, on a machine you control, wit
 
 | Version | Theme | Target | Milestone | Epic | Issues | Status |
 |---|---|---|---|---|---:|---|
-| **v2.0.1** | Stabilize & Ship | 2026-11-25 | [v2.0.1](https://github.com/CloudCompile/remote-desktop/milestones/1) | [#1](https://github.com/CloudCompile/remote-desktop/issues/1) | 12 | Next |
-| **v2.1.0** | Architecture & Reliability | 2026-12-20 | [v2.1.0](https://github.com/CloudCompile/remote-desktop/milestones/2) | [#2](https://github.com/CloudCompile/remote-desktop/issues/2) | 17 | Planned |
-| **v2.2.0** | Touch-First UX 2.0 | 2027-02-07 | [v2.2.0](https://github.com/CloudCompile/remote-desktop/milestones/3) | [#3](https://github.com/CloudCompile/remote-desktop/issues/3) | 18 | Planned |
-| **v2.3.0** | Apps, Windows & Clipboard | 2027-03-21 | [v2.3.0](https://github.com/CloudCompile/remote-desktop/milestones/4) | [#4](https://github.com/CloudCompile/remote-desktop/issues/4) | 18 | Planned |
-| **v2.4.0** | Files & Transfer | 2027-05-02 | [v2.4.0](https://github.com/CloudCompile/remote-desktop/milestones/5) | [#5](https://github.com/CloudCompile/remote-desktop/issues/5) | 16 | Planned |
-| **v2.5.0** | Audio & Media | 2027-06-13 | [v2.5.0](https://github.com/CloudCompile/remote-desktop/milestones/6) | [#6](https://github.com/CloudCompile/remote-desktop/issues/6) | 15 | Planned |
+| **v2.0.1** | Stabilize & Ship | 2026-11-25 | [v2.0.1](https://github.com/CloudCompile/remote-desktop/milestones/1) | [#1](https://github.com/CloudCompile/remote-desktop/issues/1) | 12 | ✅ Shipped 2026-11-13 |
+| **v2.1.0** | Architecture & Reliability | 2026-12-20 | [v2.1.0](https://github.com/CloudCompile/remote-desktop/milestones/2) | [#2](https://github.com/CloudCompile/remote-desktop/issues/2) | 17 | ✅ Shipped 2026-11-13 |
+| **v2.2.0** | Touch-First UX 2.0 | 2027-02-07 | [v2.2.0](https://github.com/CloudCompile/remote-desktop/milestones/3) | [#3](https://github.com/CloudCompile/remote-desktop/issues/3) | 18 | ✅ Shipped 2026-11-13 |
+| **v2.3.0** | Apps, Windows & Clipboard | 2027-03-21 | [v2.3.0](https://github.com/CloudCompile/remote-desktop/milestones/4) | [#4](https://github.com/CloudCompile/remote-desktop/issues/4) | 18 | ✅ Shipped 2026-11-13 |
+| **v2.4.0** | Files & Transfer | 2027-05-02 | [v2.4.0](https://github.com/CloudCompile/remote-desktop/milestones/5) | [#5](https://github.com/CloudCompile/remote-desktop/issues/5) | 16 | ✅ Shipped 2026-11-13 |
+| **v2.5.0** | Audio & Media | 2027-06-13 | [v2.5.0](https://github.com/CloudCompile/remote-desktop/milestones/6) | [#6](https://github.com/CloudCompile/remote-desktop/issues/6) | 15 | ✅ Shipped 2026-11-13 |
 | **v2.6.0** | Security & Multi-User | 2027-08-01 | [v2.6.0](https://github.com/CloudCompile/remote-desktop/milestones/7) | [#7](https://github.com/CloudCompile/remote-desktop/issues/7) | 19 | Planned |
 | **v3.0.0** | Platform Expansion | 2027-10-03 | [v3.0.0](https://github.com/CloudCompile/remote-desktop/milestones/8) | [#8](https://github.com/CloudCompile/remote-desktop/issues/8) | 22 | Planned |
 
@@ -55,7 +55,7 @@ Icebox items are tracked in the [Icebox milestone](https://github.com/CloudCompi
 
 ### v2.0.1 — Stabilize & Ship
 
-**Target:** 2026-11-25 · **Milestone:** [view](https://github.com/CloudCompile/remote-desktop/milestones/1) · **Epic:** [#1](https://github.com/CloudCompile/remote-desktop/issues/1) · **Draft release:** [v2.0.1](https://github.com/CloudCompile/remote-desktop/releases/tag/v2.0.1)
+**Target:** 2026-11-25 · **Milestone:** [view](https://github.com/CloudCompile/remote-desktop/milestones/1) · **Epic:** [#1](https://github.com/CloudCompile/remote-desktop/issues/1) · **Release:** [v2.0.1](https://github.com/CloudCompile/remote-desktop/releases/tag/v2.0.1) ✅ shipped
 
 **Theme.** Stop the bleeding: fix data-loss and resource-leak bugs, then put a CI, test and release baseline under the project.
 
@@ -87,7 +87,7 @@ Icebox items are tracked in the [Icebox milestone](https://github.com/CloudCompi
 
 ### v2.1.0 — Architecture & Reliability
 
-**Target:** 2026-12-20 · **Milestone:** [view](https://github.com/CloudCompile/remote-desktop/milestones/2) · **Epic:** [#2](https://github.com/CloudCompile/remote-desktop/issues/2) · **Draft release:** [v2.1.0](https://github.com/CloudCompile/remote-desktop/releases/tag/v2.1.0)
+**Target:** 2026-12-20 · **Milestone:** [view](https://github.com/CloudCompile/remote-desktop/milestones/2) · **Epic:** [#2](https://github.com/CloudCompile/remote-desktop/issues/2) · **Release:** [v2.1.0](https://github.com/CloudCompile/remote-desktop/releases/tag/v2.1.0) ✅ shipped
 
 **Theme.** Turn one large file into a maintainable single-process application with observable failure modes.
 
@@ -124,7 +124,7 @@ Icebox items are tracked in the [Icebox milestone](https://github.com/CloudCompi
 
 ### v2.2.0 — Touch-First UX 2.0
 
-**Target:** 2027-02-07 · **Milestone:** [view](https://github.com/CloudCompile/remote-desktop/milestones/3) · **Epic:** [#3](https://github.com/CloudCompile/remote-desktop/issues/3) · **Draft release:** [v2.2.0](https://github.com/CloudCompile/remote-desktop/releases/tag/v2.2.0)
+**Target:** 2027-02-07 · **Milestone:** [view](https://github.com/CloudCompile/remote-desktop/milestones/3) · **Epic:** [#3](https://github.com/CloudCompile/remote-desktop/issues/3) · **Release:** [v2.2.0](https://github.com/CloudCompile/remote-desktop/releases/tag/v2.2.0) ✅ shipped
 
 **Theme.** From 'usable on a phone' to 'designed for a phone': direct touch, zoom, PWA install, accessibility and a shell that adapts to the device.
 
@@ -162,7 +162,7 @@ Icebox items are tracked in the [Icebox milestone](https://github.com/CloudCompi
 
 ### v2.3.0 — Apps, Windows & Clipboard
 
-**Target:** 2027-03-21 · **Milestone:** [view](https://github.com/CloudCompile/remote-desktop/milestones/4) · **Epic:** [#4](https://github.com/CloudCompile/remote-desktop/issues/4) · **Draft release:** [v2.3.0](https://github.com/CloudCompile/remote-desktop/releases/tag/v2.3.0)
+**Target:** 2027-03-21 · **Milestone:** [view](https://github.com/CloudCompile/remote-desktop/milestones/4) · **Epic:** [#4](https://github.com/CloudCompile/remote-desktop/issues/4) · **Release:** [v2.3.0](https://github.com/CloudCompile/remote-desktop/releases/tag/v2.3.0) ✅ shipped
 
 **Theme.** Make the remote desktop a usable workspace: switch windows, manage running apps, install software and move richer clipboard content.
 
@@ -200,7 +200,7 @@ Icebox items are tracked in the [Icebox milestone](https://github.com/CloudCompi
 
 ### v2.4.0 — Files & Transfer
 
-**Target:** 2027-05-02 · **Milestone:** [view](https://github.com/CloudCompile/remote-desktop/milestones/5) · **Epic:** [#5](https://github.com/CloudCompile/remote-desktop/issues/5) · **Draft release:** [v2.4.0](https://github.com/CloudCompile/remote-desktop/releases/tag/v2.4.0)
+**Target:** 2027-05-02 · **Milestone:** [view](https://github.com/CloudCompile/remote-desktop/milestones/5) · **Epic:** [#5](https://github.com/CloudCompile/remote-desktop/issues/5) · **Release:** [v2.4.0](https://github.com/CloudCompile/remote-desktop/releases/tag/v2.4.0) ✅ shipped
 
 **Theme.** Replace the one-folder upload toy with a safe, resumable, mobile-friendly file workspace.
 
@@ -236,7 +236,7 @@ Icebox items are tracked in the [Icebox milestone](https://github.com/CloudCompi
 
 ### v2.5.0 — Audio & Media
 
-**Target:** 2027-06-13 · **Milestone:** [view](https://github.com/CloudCompile/remote-desktop/milestones/6) · **Epic:** [#6](https://github.com/CloudCompile/remote-desktop/issues/6) · **Draft release:** [v2.5.0](https://github.com/CloudCompile/remote-desktop/releases/tag/v2.5.0)
+**Target:** 2027-06-13 · **Milestone:** [view](https://github.com/CloudCompile/remote-desktop/milestones/6) · **Epic:** [#6](https://github.com/CloudCompile/remote-desktop/issues/6) · **Release:** [v2.5.0](https://github.com/CloudCompile/remote-desktop/releases/tag/v2.5.0) ✅ shipped
 
 **Theme.** Audio becomes controllable, diagnosable and usable in both directions, with a path toward WebRTC media.
 
