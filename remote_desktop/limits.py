@@ -14,7 +14,7 @@ Caps (env-configurable, see docs/CONFIGURATION.md):
 
 import threading
 
-from . import config, log
+from . import config, logging as log
 
 _lock = threading.Lock()
 _counts = {"connections": 0, "ws": 0, "audio": 0, "media_in": 0}

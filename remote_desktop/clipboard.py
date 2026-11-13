@@ -12,7 +12,7 @@ import subprocess
 import threading
 import time
 
-from . import config, log
+from . import config, logging as log
 
 CLIP_HISTORY_FILE = os.path.join(config.BASE_DIR, ".cliphistory.json")
 CLIP_HISTORY_MAX = 100

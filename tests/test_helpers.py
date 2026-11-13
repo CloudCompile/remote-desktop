@@ -6,6 +6,7 @@ Since #22 the implementation lives in the remote_desktop package and
 `control` is a re-export shim. Tests patch mutable state on the OWNING
 submodule (rd_auth/rd_files/rd_clipboard) so the functions see the patched
 values; `control.<name>` still works for reads and plain functions."""
+
 import base64
 import hashlib
 import io
@@ -24,16 +25,15 @@ from remote_desktop import files as rd_files
 
 # ---------------------------------------------------------------- tokens
 
+
 @pytest.fixture
 def auth(monkeypatch):
     """A configured password so token tests pass even where .passhash is
     absent (CI). Recomputes SECRET the same way main() does."""
-    monkeypatch.setattr(rd_auth, "PASS_HASH",
-                        "$6$rounds=1000$salt$" +
-                        control.hashlib.sha256(b"x").hexdigest())
-    monkeypatch.setattr(rd_auth, "SECRET",
-                        control.hashlib.sha256(
-                            (rd_auth.PASS_HASH + "rd-secret-v2").encode()).digest())
+    monkeypatch.setattr(rd_auth, "PASS_HASH", "$6$rounds=1000$salt$" + control.hashlib.sha256(b"x").hexdigest())
+    monkeypatch.setattr(
+        rd_auth, "SECRET", control.hashlib.sha256((rd_auth.PASS_HASH + "rd-secret-v2").encode()).digest()
+    )
 
 
 def test_token_roundtrip(auth):
@@ -74,6 +74,7 @@ def test_token_garbage():
 
 # ---------------------------------------------------------------- file paths
 
+
 def test_safe_file_path_accepts_plain_names(tmp_path, monkeypatch):
     monkeypatch.setattr(rd_files, "FILES_DIR", str(tmp_path))
     assert control._safe_file_path("hello.txt") == os.path.join(str(tmp_path), "hello.txt")
@@ -95,6 +96,7 @@ def test_safe_file_path_rejects_hidden(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------- websocket reader
+
 
 def ws_stream(frames):
     return io.BytesIO(b"".join(frames))
@@ -118,20 +120,26 @@ def test_ws_single_binary_frame():
 
 
 def test_ws_fragmented_message():
-    stream = ws_stream([
-        client_frame(b"foo", fin=False),
-        client_frame(b"bar", opcode=0, fin=False),
-        client_frame(b"baz", opcode=0, fin=True),
-    ])
+    stream = ws_stream(
+        [
+            client_frame(b"foo", fin=False),
+            client_frame(b"bar", opcode=0, fin=False),
+            client_frame(b"baz", opcode=0, fin=True),
+        ]
+    )
     assert control._ws_read_frame(stream) == (2, b"foobarbaz")
 
 
 def test_ws_interleaved_ping_during_fragments():
-    reader = control._WsReader(ws_stream([
-        client_frame(b"abc", fin=False),
-        client_frame(b"ping", opcode=9),
-        client_frame(b"def", opcode=0, fin=True),
-    ]))
+    reader = control._WsReader(
+        ws_stream(
+            [
+                client_frame(b"abc", fin=False),
+                client_frame(b"ping", opcode=9),
+                client_frame(b"def", opcode=0, fin=True),
+            ]
+        )
+    )
     assert reader.read() == (9, b"ping")
     assert reader.read() == (2, b"abcdef")
 
@@ -173,6 +181,7 @@ def test_ws_16bit_and_64bit_lengths():
 
 # ---------------------------------------------------------------- clipboard persistence
 
+
 @pytest.fixture
 def clip_file(tmp_path, monkeypatch):
     monkeypatch.setattr(rd_clipboard, "CLIP_HISTORY_FILE", str(tmp_path / "hist.json"))
@@ -184,7 +193,7 @@ def test_clip_roundtrip(clip_file):
     control.clip_add("first", "desktop")
     control.clip_add("second", "phone")
     assert len(rd_clipboard._clip_history) == 2
-    rd_clipboard._clip_history = []     # simulate restart
+    rd_clipboard._clip_history = []  # simulate restart
     control._clip_load()
     assert [i["text"] for i in rd_clipboard._clip_history] == ["second", "first"]
 
@@ -197,12 +206,16 @@ def test_clip_corrupt_quarantined(clip_file):
 
 
 def test_clip_partial_corrupt_entries_skipped(clip_file):
-    clip_file.write_text(json.dumps([
-        {"id": "a", "text": "ok", "time": 1, "source": "desktop"},
-        "not a dict",
-        {"id": "b"},                        # no text
-        {"id": "a", "text": "dup", "time": 2, "source": "desktop"},  # dup id
-    ]))
+    clip_file.write_text(
+        json.dumps(
+            [
+                {"id": "a", "text": "ok", "time": 1, "source": "desktop"},
+                "not a dict",
+                {"id": "b"},  # no text
+                {"id": "a", "text": "dup", "time": 2, "source": "desktop"},  # dup id
+            ]
+        )
+    )
     control._clip_load()
     assert [i["id"] for i in rd_clipboard._clip_history] == ["a"]
     assert rd_clipboard._clip_history[0]["text"] == "ok"
@@ -218,6 +231,7 @@ def test_clip_trim_to_max(clip_file, monkeypatch):
 
 # ---------------------------------------------------------------- rate limit
 
+
 def test_login_rate_limit_blocks_after_max():
     control.LOGIN_ATTEMPTS.clear()
     ip = "203.0.113.9"
@@ -231,7 +245,7 @@ def test_login_rate_limit_window_expiry():
     control.LOGIN_ATTEMPTS.clear()
     ip = "203.0.113.10"
     control.LOGIN_ATTEMPTS[ip] = [time.time() - control.LOGIN_WINDOW - 1] * 5
-    assert control._login_allowed(ip) is True   # all attempts expired
+    assert control._login_allowed(ip) is True  # all attempts expired
 
 
 def test_login_rate_limit_table_bounded():
@@ -247,13 +261,15 @@ def test_client_ip_direct_peer():
     class H:  # minimal handler stand-in
         client_address = ("198.51.100.7", 4444)
         headers = {"X-Forwarded-For": "1.2.3.4"}
-    assert control._client_ip(H()) == "198.51.100.7"   # spoofed header ignored
+
+    assert control._client_ip(H()) == "198.51.100.7"  # spoofed header ignored
 
 
 def test_client_ip_trusted_proxy():
     class H:
         client_address = ("10.8.0.1", 4444)
         headers = {"X-Forwarded-For": "1.2.3.4, 10.8.0.1"}
+
     old = rd_auth.TRUSTED_PROXIES
     rd_auth.TRUSTED_PROXIES = {"10.8.0.1"}
     try:
@@ -263,6 +279,7 @@ def test_client_ip_trusted_proxy():
 
 
 # ---------------------------------------------------------------- misc
+
 
 def test_health_shape():
     h = control.health()

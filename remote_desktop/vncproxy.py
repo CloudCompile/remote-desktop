@@ -28,7 +28,7 @@ import socket
 import threading
 import time
 
-from . import config, limits, log, ws
+from . import config, limits, logging as log, ws
 
 _stats_lock = threading.Lock()
 _stats = {

@@ -20,9 +20,9 @@ remote_desktop).
 """
 
 import hashlib  # noqa: F401  (legacy re-exports: control.hashlib in old tests)
-import hmac     # noqa: F401
+import hmac  # noqa: F401
 
-from remote_desktop import *          # noqa: F401,F403
+from remote_desktop import *  # noqa: F401,F403
 from remote_desktop.server import main
 
 if __name__ == "__main__":

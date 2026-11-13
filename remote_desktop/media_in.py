@@ -13,7 +13,7 @@ import subprocess
 import threading
 import time
 
-from . import audio, config, limits, log, procs, ws
+from . import audio, config, limits, logging as log, procs, ws
 
 _mic_busy = threading.Lock()
 _cam_busy = threading.Lock()

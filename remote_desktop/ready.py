@@ -17,7 +17,7 @@ import subprocess
 import threading
 import time
 
-from . import config, log
+from . import config, logging as log
 
 _PROBE_TIMEOUT = 1.0  # per-probe hard bound (seconds)
 _cache_lock = threading.Lock()

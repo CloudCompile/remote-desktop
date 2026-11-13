@@ -20,7 +20,7 @@ import tempfile
 import time
 
 from . import clipboard as _clipboard
-from . import config, log
+from . import config, logging as log
 
 STATE_VERSION = 1
 BACKUP_KEEP = 5
@@ -252,12 +252,12 @@ def import_state(path):
             if version < 1:
                 return {"ok": False, "error": "archive manifest has no valid state_version"}
             members = {mm.name for mm in tar.getmembers()}
-            for name, target in (("pins", PINS_FILE), ("cliphistory", _clipboard.CLIP_HISTORY_FILE)):
-                if name not in members:
+            for arcname, target in ((_PIN_NAME, PINS_FILE), (_CLIP_NAME, _clipboard.CLIP_HISTORY_FILE)):
+                if arcname not in members:
                     continue
-                data = tar.extractfile(name).read()
+                data = tar.extractfile(arcname).read()
                 json.loads(data.decode())  # raises on corrupt payloads
-                staged.append((data, target, name))
+                staged.append((data, target, "pins" if arcname == _PIN_NAME else "cliphistory"))
         # everything validated — replace live state atomically
         imported = []
         for data, target, name in staged:

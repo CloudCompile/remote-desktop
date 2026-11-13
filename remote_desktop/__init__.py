@@ -3,7 +3,7 @@
 Module map (ownership notes at the top of each module):
 
     config.py    every RD_*/VNC_* setting: one schema, validation, generated docs
-    log.py       structured logging: levels, request ids, text/json, rotation
+    log.py       structured logging: levels, request ids, text/json, rotation (module: logging.py)
     procs.py     child-process registry + subprocess helpers
     auth.py      cookie tokens, password check, login rate limiting
     http.py      BaseHandler plumbing + static files
@@ -34,7 +34,7 @@ from . import (
     files,
     http,
     limits,
-    log,
+    logging as _logmod,
     media_in,
     procs,
     ready,
@@ -45,6 +45,7 @@ from . import (
     ws,
 )
 from . import server  # noqa: F401  (routes; imports the modules above)
+from .logging import log  # compat: control.log is the log function (#24)
 
 # Public surface, re-exported so `from remote_desktop import *` (and the
 # legacy `control` shim) expose the same names the single-file module did —
@@ -143,7 +144,7 @@ from .config import (
 from .files import FILES_DIR, UPLOAD_LIMIT, _safe_file_path, cleanup_partial_uploads, list_files
 from .http import MIME, MAX_BODY, BaseHandler, send_file
 from .limits import acquire, caps, counts, full, gate, release, snapshot as limits_snapshot
-from .log import log, request_id as log_request_id, setup as log_setup
+from .logging import log, request_id as log_request_id, setup as log_setup
 from .media_in import camera_status, mic_status, websocket_camera, websocket_mic
 from .config import _env, _pa_env, VERSION
 from .procs import (
@@ -186,7 +187,7 @@ __all__ = [
     "files",
     "http",
     "limits",
-    "log",
+    "logging",
     "media_in",
     "procs",
     "ready",

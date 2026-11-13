@@ -10,7 +10,7 @@ import glob
 import os
 import shutil
 
-from . import config, log, procs
+from . import config, logging as log, procs
 
 AUDIO_LOG = "/tmp/remote_audio.log"
 

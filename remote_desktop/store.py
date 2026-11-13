@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import time
 
-from . import config, log, procs
+from . import config, logging as log, procs
 
 INSTALL_LOG = "/tmp/remote-install.log"
 _INSTALL_CACHE = {}

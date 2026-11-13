@@ -12,7 +12,7 @@ import subprocess
 import threading
 import time
 
-from . import config, log
+from . import config, logging as log
 
 # every ffmpeg/stream child we spawn, so shutdown can reap stragglers (#14/#25)
 child_procs = set()

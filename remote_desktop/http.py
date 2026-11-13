@@ -13,7 +13,7 @@ import uuid
 
 from http.server import BaseHTTPRequestHandler
 
-from . import auth, config, log
+from . import auth, config, logging as log
 
 MIME = mimetypes.MimeTypes()
 MIME.add_type("application/javascript", ".js")

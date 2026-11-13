@@ -8,7 +8,7 @@ pretending success (#31); reported geometry also feeds /api/stats.
 import threading
 import time
 
-from . import config, log, procs, state
+from . import config, logging as log, procs, state
 
 FIT_CLASSES = "discord|Discord|chrome|Google-chrome|firefox|Navigator|xterm|nautilus|Nautilus|gedit|vlc|gimp|evince"
 
