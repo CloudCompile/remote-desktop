@@ -66,6 +66,7 @@
                  border-radius:2px;background:#444}
   .sheet h3{font-size:13px;color:#888;margin:8px 0 10px;text-transform:uppercase;letter-spacing:.08em}
   .sheet .row{display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;align-items:center}
+  .sheet .row[hidden]{display:none}
   .sheet button,.sheet select,.sheet input[type=text]{flex:1 1 auto;min-height:44px;border:0;border-radius:10px;
          background:#2a2a2a;color:#eee;padding:0 12px;font-size:14px;box-sizing:border-box}
   .sheet button{background:#333}
@@ -191,6 +192,13 @@
     </div>
     <div class="row"><label>Volume</label><input type="range" id="audioVol" min="0" max="1" step="0.05" value="0.9"></div>
     <div class="row"><button id="audioTest">Play test tone</button></div>
+    <hr>
+    <h3>Devices in — desktop browser only</h3>
+    <div class="row" id="devRow" hidden>
+      <button id="micInBtn">🎤 Mic in</button>
+      <button id="camInBtn">📷 Cam in</button>
+    </div>
+    <div class="row"><label id="devNote">Share this computer's microphone and webcam into the desktop. Hidden on phones and tablets.</label></div>
   </div>
 
   <div class="sheet" id="shFiles">
@@ -1337,6 +1345,124 @@ $('audioVol').addEventListener('input', e => {
 // mobile browsers auto-suspend audio contexts in background tabs
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && actx) actx.resume().catch(() => {});
+});
+
+/* ------------------------------------------------------------------ *
+ *  Devices in: share THIS computer's mic and webcam into the desktop  *
+ *  so remote apps see a real capture device. Desktop-browser clients  *
+ *  only — the controls stay hidden on phones and tablets.             *
+ * ------------------------------------------------------------------ */
+
+const DESKTOP_CLIENT = matchMedia('(pointer: fine)').matches &&
+                      !/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+if (DESKTOP_CLIENT) $('devRow').hidden = false;
+
+function wsURL(path){
+  return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + path;
+}
+
+// AudioWorklet source: getUserMedia -> Int16 PCM chunks (s16le/48 kHz/mono),
+// ~85 ms per chunk, ~96 kB/s upstream. Posted to the main thread over a
+// MessagePort; the WebSocket then carries the raw buffers.
+const MIC_WORKLET = `
+  class MicIn extends AudioWorkletProcessor {
+    constructor(){ super(); this.buf = new Int16Array(4096); this.n = 0; }
+    process(inputs){
+      const ch = inputs[0] && inputs[0][0];
+      if (!ch) return true;
+      for (let i = 0; i < ch.length; i++){
+        const s = Math.max(-1, Math.min(1, ch[i]));
+        this.buf[this.n++] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        if (this.n === this.buf.length){ this.port.postMessage(this.buf.slice(0)); this.n = 0; }
+      }
+      return true;
+    }
+  }
+  registerProcessor('mic-in', MicIn);`;
+
+let micIn = null;   // { ws, actx, stream }
+let camIn = null;   // { ws, rec, stream }
+
+async function startMicIn(){
+  if (micIn) return;
+  const ws = new WebSocket(wsURL('/api/mic'));
+  ws.binaryType = 'arraybuffer';
+  try {
+    await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('server refused mic-in')); });
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    const actx = new AudioContext({ sampleRate: 48000 });
+    await actx.audioWorklet.addModule(URL.createObjectURL(new Blob([MIC_WORKLET], { type: 'application/javascript' })));
+    const node = new AudioWorkletNode(actx, 'mic-in');
+    node.port.onmessage = e => { if (ws.readyState === 1) ws.send(e.data); };
+    actx.createMediaStreamSource(stream).connect(node);  // never to destination: no local echo
+    ws.onclose = () => stopMicIn();
+    micIn = { ws, actx, stream };
+    $('micInBtn').classList.add('on');
+    status('Mic in: this computer is the desktop microphone');
+  } catch (e) {
+    try { ws.close(); } catch(_) {}
+    stopMicIn();
+    status('Mic in failed: ' + e.message, true);
+  }
+}
+
+function stopMicIn(){
+  if (micIn){
+    try { micIn.ws.onclose = null; micIn.ws.close(); } catch(_) {}
+    micIn.stream.getTracks().forEach(t => t.stop());
+    try { micIn.actx.close(); } catch(_) {}
+    micIn = null;
+  }
+  $('micInBtn').classList.remove('on');
+}
+
+async function startCamIn(){
+  if (camIn) return;
+  let st = {};
+  try { st = await fetch('/api/camera/status').then(r => r.json()); } catch(_) {}
+  if (!st.device){
+    status(st.loopback === false
+      ? 'Cam in needs the v4l2loopback module on the desktop (sudo modprobe v4l2loopback)'
+      : 'Cam in: no /dev/video device on the desktop', true);
+    return;
+  }
+  const ws = new WebSocket(wsURL('/api/camera'));
+  ws.binaryType = 'arraybuffer';
+  try {
+    await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('server refused cam-in')); });
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } } });
+    const mime = ['video/webm;codecs=vp8', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m)) || '';
+    const rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 2500000 } : undefined);
+    rec.ondataavailable = e => { if (ws.readyState === 1 && e.data.size) ws.send(e.data); };
+    rec.onstop = () => { try { ws.close(); } catch(_) {} };
+    rec.start(500);                       // flush a WebM cluster every 500 ms
+    ws.onclose = () => stopCamIn();
+    camIn = { ws, rec, stream };
+    $('camInBtn').classList.add('on');
+    status('Cam in: this computer is the desktop webcam (' + st.device + ')');
+  } catch (e) {
+    try { ws.close(); } catch(_) {}
+    stopCamIn();
+    status('Cam in failed: ' + e.message, true);
+  }
+}
+
+function stopCamIn(){
+  if (camIn){
+    try { camIn.rec.stop(); } catch(_) {}   // onstop closes the websocket
+    camIn.stream.getTracks().forEach(t => t.stop());
+    camIn = null;
+  }
+  $('camInBtn').classList.remove('on');
+}
+
+$('micInBtn').addEventListener('click', () => {
+  if (micIn) { stopMicIn(); status('Mic in stopped'); } else startMicIn();
+});
+$('camInBtn').addEventListener('click', () => {
+  if (camIn) { stopCamIn(); status('Cam in stopped'); } else startCamIn();
 });
 
 /* ------------------------------------------------------------------ *

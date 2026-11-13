@@ -161,6 +161,67 @@ def audio_status():
             "chosen_source": audio_source(), "ffmpeg_log": log_tail}
 
 
+# ---------------------------------------------- device in (desktop browser)
+#
+# A desktop PC browser can share its own microphone and webcam into the VNC
+# desktop: remote apps then see a real "RemoteMicIn" capture device and a
+# real /dev/video camera. The web UI only offers these controls on desktop
+# clients, but the endpoints accept any authenticated client.
+
+MIC_SINK = "remote_mic_sink"
+MIC_SOURCE = "remote_mic"
+MIC_RATE = 48000
+_mic_busy = threading.Lock()
+_cam_busy = threading.Lock()
+
+
+def ensure_mic_source():
+    """Create the virtual 'remote_mic' PulseAudio source: a null sink whose
+    monitor is remapped into a capture source. ffmpeg then plays the client
+    mic into the sink, so desktop apps capture from 'remote_mic'."""
+    if not _pa("list", "short", "sinks"):
+        return False
+    if MIC_SINK not in _pa("list", "short", "sinks"):
+        _pa("load-module", "module-null-sink", f"sink_name={MIC_SINK}", f"rate={MIC_RATE}",
+            "sink_properties=device.description=RemoteMicIn")
+    if MIC_SOURCE not in _pa("list", "short", "sources"):
+        _pa("load-module", "module-remap-source", f"source_name={MIC_SOURCE}",
+            f"master={MIC_SINK}.monitor", "source_properties=device.description=RemoteMicIn")
+    return MIC_SOURCE in _pa("list", "short", "sources")
+
+
+def mic_status():
+    return {"ffmpeg": bool(shutil.which("ffmpeg")),
+            "source": MIC_SOURCE in _pa("list", "short", "sources"),
+            "sample_rate": MIC_RATE, "active": _mic_busy.locked()}
+
+
+def _camera_device():
+    """Loopback device to feed; REMOTE_CAM_DEVICE overrides (matters when a
+    real webcam also exists and takes /dev/video0)."""
+    d = os.environ.get("REMOTE_CAM_DEVICE")
+    if d and os.path.exists(d):
+        return d
+    import glob
+    devs = sorted(glob.glob("/dev/video*"))
+    return devs[0] if devs else None
+
+
+def camera_status():
+    import glob
+    _, lsmod, _ = _run(["lsmod"])
+    devs = []
+    for dev in sorted(glob.glob("/dev/video*")):
+        try:
+            with open(f"/sys/class/video4linux/{os.path.basename(dev)}/name") as f:
+                name = f.read().strip()
+        except Exception:
+            name = ""
+        devs.append({"dev": dev, "name": name})
+    return {"ffmpeg": bool(shutil.which("ffmpeg")), "loopback": "v4l2loopback" in lsmod,
+            "devices": devs, "device": _camera_device(), "active": _cam_busy.locked()}
+
+
 # ------------------------------------------------------------------ display / windows
 
 def resize_display(w, h):
@@ -930,6 +991,111 @@ def websocket_proxy(handler):
         log(f"ws proxy close {handler.client_address[0]}")
 
 
+def _ws_upgrade(handler):
+    """Complete the RFC6455 upgrade for a server-side websocket endpoint.
+    Returns False (and replies) if the request is not a websocket upgrade."""
+    key = handler.headers.get("Sec-WebSocket-Key")
+    if not key or "upgrade" not in (handler.headers.get("Connection", "") + "").lower():
+        handler._json(400, {"error": "expected websocket upgrade"})
+        return False
+    accept = base64.b64encode(hashlib.sha1((key + WS_GUID).encode()).digest()).decode()
+    handler.send_response(101)
+    handler.send_header("Upgrade", "websocket")
+    handler.send_header("Connection", "Upgrade")
+    handler.send_header("Sec-WebSocket-Accept", accept)
+    handler.end_headers()
+    handler.close_connection = True
+    return True
+
+
+def _ws_pong(handler, payload):
+    try:
+        handler.wfile.write(bytes((0x8A, len(payload))) + payload)
+        handler.wfile.flush()
+    except Exception:
+        pass
+
+
+def _ws_to_stdin(handler, cmd, opened_log, closed_log):
+    """Shared device-in loop: authenticated websocket whose binary frames
+    are piped into a subprocess (ffmpeg). Blocks until the client leaves."""
+    try:
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                stderr=open(AUDIO_LOG, "ab"), preexec_fn=_die_with_parent,
+                                env=_pa_env())
+    except Exception as e:
+        log(f"device-in: ffmpeg start failed: {e}")
+        return
+    log(opened_log)
+    try:
+        while True:
+            fr = _ws_read_frame(handler.rfile)
+            if fr is None:
+                break
+            op, payload = fr
+            if op == 0x8:
+                break
+            if op == 0x9:
+                _ws_pong(handler, payload)
+                continue
+            if payload and op in (0x1, 0x2, 0x0):
+                proc.stdin.write(payload)   # blocks if ffmpeg falls behind = backpressure
+    except Exception:
+        pass
+    finally:
+        try:
+            proc.stdin.close()
+            proc.wait(timeout=3)
+        except Exception:
+            proc.kill()
+        log(closed_log)
+
+
+def websocket_mic(handler):
+    """Mic in: binary frames = raw s16le / 48 kHz / mono PCM from the
+    client, played by ffmpeg into the null sink behind 'remote_mic'."""
+    if not shutil.which("ffmpeg"):
+        return handler._json(503, {"error": "ffmpeg not installed"})
+    if not _mic_busy.acquire(blocking=False):
+        return handler._json(409, {"error": "mic-in already in use"})
+    try:
+        if not ensure_mic_source():
+            return handler._json(503, {"error": "PulseAudio unavailable"})
+        if not _ws_upgrade(handler):
+            return
+        cmd = ["ffmpeg", "-loglevel", "warning", "-fflags", "nobuffer", "-flags", "low_delay",
+               "-f", "s16le", "-ar", str(MIC_RATE), "-ac", "1", "-i", "pipe:0",
+               "-f", "pulse", "-device", MIC_SINK, "remote-mic-in"]
+        _ws_to_stdin(handler, cmd,
+                     f"mic-in open  {handler.client_address[0]} -> {MIC_SINK}",
+                     f"mic-in close {handler.client_address[0]}")
+    finally:
+        _mic_busy.release()
+
+
+def websocket_camera(handler):
+    """Cam in: binary frames = WebM (MediaRecorder) video from the client,
+    decoded by ffmpeg onto a v4l2loopback device so desktop apps see it as
+    a webcam. Needs the v4l2loopback kernel module on the desktop."""
+    if not shutil.which("ffmpeg"):
+        return handler._json(503, {"error": "ffmpeg not installed"})
+    dev = _camera_device()
+    if not dev:
+        return handler._json(503, {"error": "no /dev/video device (install v4l2loopback)"})
+    if not _cam_busy.acquire(blocking=False):
+        return handler._json(409, {"error": "cam-in already in use"})
+    try:
+        if not _ws_upgrade(handler):
+            return
+        cmd = ["ffmpeg", "-loglevel", "warning", "-fflags", "nobuffer", "-flags", "low_delay",
+               "-f", "matroska", "-i", "pipe:0", "-f", "v4l2", "-pix_fmt", "yuv420p", dev]
+        _ws_to_stdin(handler, cmd,
+                     f"cam-in open  {handler.client_address[0]} -> {dev}",
+                     f"cam-in close {handler.client_address[0]}")
+    finally:
+        _cam_busy.release()
+
+
 # ------------------------------------------------------------------ icons
 
 def find_icon(name):
@@ -1198,6 +1364,14 @@ class Handler(BaseHTTPRequestHandler):
                 run_detached(["ffmpeg", "-loglevel", "error", "-f", "lavfi",
                               "-i", "sine=frequency=440:duration=4", "-f", "pulse", "-device", sink, "remote-test"])
                 return self._json(200, {"ok": True, "msg": "playing a 4s 440Hz tone into " + sink})
+            if path == "/api/mic":
+                return websocket_mic(self)
+            if path == "/api/mic/status":
+                return self._json(200, mic_status())
+            if path == "/api/camera":
+                return websocket_camera(self)
+            if path == "/api/camera/status":
+                return self._json(200, camera_status())
             if path == "/api/audio/raw":
                 return self._stream_audio(
                     "application/octet-stream",

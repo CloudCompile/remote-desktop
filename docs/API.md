@@ -80,6 +80,23 @@ JSON errors are `{"ok": false, "error": "..."}` with 4xx/5xx status.
 | GET | `/api/audio/raw` | Live PCM s16le 44.1 kHz stereo stream |
 | GET | `/api/audio/test` | Plays a 4 s 440 Hz test tone into the sink |
 
+## Devices in (desktop browser clients)
+
+The web UI shows these controls only on desktop browsers; the endpoints
+accept any authenticated client. Mic in creates a `remote_mic` PulseAudio
+source (a null sink `remote_mic_sink` remapped into a capture source),
+fed with s16le / 48 kHz / mono PCM from websocket binary frames via
+ffmpeg. Cam in needs the `v4l2loopback` module on the desktop and decodes
+WebM (MediaRecorder) frames onto the first `/dev/video*` device — set
+`REMOTE_CAM_DEVICE` to pick a specific one.
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/mic` | WebSocket; binary frames = raw s16le 48 kHz mono PCM |
+| GET | `/api/mic/status` | Virtual mic source status |
+| GET | `/api/camera` | WebSocket; binary frames = WebM video chunks |
+| GET | `/api/camera/status` | v4l2loopback/device status; 409 if already in use |
+
 ## Stats and icons
 
 | Method | Path | Description |
