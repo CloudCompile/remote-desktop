@@ -644,7 +644,19 @@ def test_audio_raw_stream_opens(server):
             head += c
         status = head.split(b"\r\n")[0]
         if b"503" in status:
-            assert b"audio capture unavailable" in head
+            # the body may arrive in a later TCP segment than the header
+            # terminator; read to EOF (Connection: close) before asserting
+            body = head.split(b"\r\n\r\n", 1)[1] if b"\r\n\r\n" in head else b""
+            s.settimeout(3)
+            try:
+                while len(body) < 512:
+                    c = s.recv(4096)
+                    if not c:
+                        break
+                    body += c
+            except socket.timeout:
+                pass
+            assert b"audio capture unavailable" in body, body
             return
         assert b"200" in status, status
         total = 0
