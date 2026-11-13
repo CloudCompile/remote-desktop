@@ -76,8 +76,22 @@ class Server:
         self.proc = None
 
     def start(self):
+        # use the coverage entry wrapper when a coverage run is detected,
+        # so the child's coverage is measured (#35); behaves like control.py
+        entry = os.path.join(REPO, "tests", "coverage_entry.py")
+        script = (
+            entry if os.path.exists(os.environ.get("COVERAGE_PROCESS_START", "")) else os.path.join(REPO, "control.py")
+        )
+        self.env["RD_COVERAGE_RC"] = os.environ.get("COVERAGE_PROCESS_START", "")
+        if script == entry:
+            # the sandboxed HOME would hide the user site-packages that hold
+            # coverage; point the child at the real one explicitly
+            import site
+
+            site_pkgs = site.getusersitepackages()
+            self.env["PYTHONPATH"] = os.pathsep.join(p for p in [site_pkgs, os.environ.get("PYTHONPATH", "")] if p)
         self.proc = subprocess.Popen(
-            [sys.executable, os.path.join(REPO, "control.py")],
+            [sys.executable, script],
             env=self.env,
             stdout=subprocess.DEVNULL,
             stderr=self.log_path.open("ab"),
