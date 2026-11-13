@@ -611,6 +611,7 @@ export function initTouch(app) {
   } else {
     const b = document.createElement('button');
     b.textContent = '⌨';
+    b.setAttribute('aria-label', 'Open keyboard');
     b.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:99999;min-width:48px;min-height:48px;' +
                       'border:0;border-radius:10px;background:rgba(28,28,28,.92);color:#fff;font-size:20px';
     b.addEventListener('click', openKeyboard);
