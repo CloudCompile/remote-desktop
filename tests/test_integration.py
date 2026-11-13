@@ -625,6 +625,38 @@ def test_ready_reports_dependencies(server):
     assert "refused" in snap["dependencies"]["vnc"]["reason"] or snap["dependencies"]["vnc"]["reason"]
 
 
+def test_audio_raw_stream_opens(server):
+    # the audio route exists and answers 200 (bytes flow when PulseAudio +
+    # ffmpeg are present; empty stream otherwise). Raw socket so we can
+    # bound the read of an endless stream.
+    _, cookie = _login(server, ip="192.0.2.17")
+    s = socket.create_connection(("127.0.0.1", server.port), timeout=10)
+    try:
+        req = (f"GET /api/audio.raw HTTP/1.1\r\nHost: x\r\n"
+               f"Cookie: {cookie}\r\nConnection: close\r\n\r\n")
+        s.sendall(req.encode())
+        s.settimeout(8)
+        head = b""
+        while b"\r\n\r\n" not in head:
+            c = s.recv(4096)
+            if not c:
+                break
+            head += c
+        status = head.split(b"\r\n")[0]
+        assert b"200" in status, status
+        total = 0
+        try:
+            while total < 4096:
+                c = s.recv(4096)
+                if not c:
+                    break
+                total += len(c)
+        except socket.timeout:
+            pass  # stream is alive and flowing; that is all we assert
+    finally:
+        s.close()
+
+
 def test_stats_shape(server):
     _, cookie = _login(server, ip="192.0.2.16")
     code, _, body = server.request("/api/stats", cookie=cookie)

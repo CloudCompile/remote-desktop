@@ -232,7 +232,7 @@ class Handler(http.BaseHandler):
                 return media_in.websocket_camera(self)
             if path == "/api/camera/status":
                 return self._json(200, media_in.camera_status())
-            if path == "/api/audio/raw":
+            if path == "/api/audio.raw":
                 return self._stream_audio(
                     "application/octet-stream", ["-ac", "2", "-ar", "44100", "-c:a", "pcm_s16le", "-f", "s16le", "-"]
                 )
