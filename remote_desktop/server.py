@@ -179,7 +179,15 @@ class Handler(http.BaseHandler):
                 return self._json(200, {"ok": True})
             if path == "/api/windows":
                 try:
-                    return self._json(200, {"ok": True, "wm": windows.wm_name(), "windows": windows.list_windows()})
+                    return self._json(
+                        200,
+                        {
+                            "ok": True,
+                            "wm": windows.wm_name(),
+                            "windows": windows.list_windows(),
+                            "display": windows.display_geometry(),  # #60: move/center math
+                        },
+                    )
                 except Exception as e:
                     return self._json(200, {"ok": False, "error": str(e)})
             if path == "/api/window/thumbnail":  # #59: single-frame JPEG of one window
