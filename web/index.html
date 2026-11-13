@@ -76,6 +76,11 @@
   .sheet .val{flex:0 0 56px;text-align:center;color:#9c9;font-size:13px}
   .sheet input[type=range]{flex:1;width:100%;min-height:36px}
   .sheet input[type=checkbox]{width:20px;height:20px;min-height:0}
+  /* segmented control (input mode, viewport modes) */
+  .sheet .seg{display:flex;gap:4px;flex:1 1 100%}
+  .sheet .seg button{flex:1;min-height:40px;background:var(--card2,#333);border-radius:10px;
+                     font-size:13px;padding:0 6px;color:var(--fg,#eee)}
+  .sheet .seg button.on{background:var(--accent);color:var(--accent-fg,#fff)}
   .sheet .check{flex:0 1 auto;min-height:44px;display:flex;align-items:center;gap:8px;font-size:14px;
                 background:#222;border-radius:10px;padding:0 12px}
   .sheet hr{border:0;border-top:1px solid #262626;margin:10px 0}
