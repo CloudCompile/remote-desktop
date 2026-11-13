@@ -127,9 +127,7 @@ SCHEMA = [
         120,
         "Maximum desktop-audio recording duration in minutes (#102).",
     ),
-    _Setting(
-        "rec_max_mb", "RD_REC_MAX_MB", "int", 200, "Maximum desktop-audio recording size in MiB (#102)."
-    ),
+    _Setting("rec_max_mb", "RD_REC_MAX_MB", "int", 200, "Maximum desktop-audio recording size in MiB (#102)."),
     _Setting(
         "http_timeout", "RD_HTTP_TIMEOUT", "duration", 120, "Seconds an idle keep-alive HTTP connection is kept open."
     ),

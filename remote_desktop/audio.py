@@ -491,16 +491,24 @@ def capture_cmd(source, codec, bitrate):
     """The ffmpeg command for one capture tier (#96/#105)."""
     if codec == "opus":
         b = max(BITRATE_MIN, min(BITRATE_MAX, int(bitrate or BITRATE_DEFAULT)))
-        cx = OPUS_COMPLEXITY["low"] if b <= QUALITY_PRESETS["low"] else (
-            OPUS_COMPLEXITY["medium"] if b <= QUALITY_PRESETS["medium"] else OPUS_COMPLEXITY["high"]
+        cx = (
+            OPUS_COMPLEXITY["low"]
+            if b <= QUALITY_PRESETS["low"]
+            else (OPUS_COMPLEXITY["medium"] if b <= QUALITY_PRESETS["medium"] else OPUS_COMPLEXITY["high"])
         )
         args = [
-            "-c:a", "libopus",
-            "-b:a", f"{b}",
-            "-vbr", "on",
-            "-frame_duration", "20",
-            "-compression_level", str(cx),  # server-side tuning (#96)
-            "-f", "webm",
+            "-c:a",
+            "libopus",
+            "-b:a",
+            f"{b}",
+            "-vbr",
+            "on",
+            "-frame_duration",
+            "20",
+            "-compression_level",
+            str(cx),  # server-side tuning (#96)
+            "-f",
+            "webm",
         ]
         mime = 'audio/webm; codecs="opus"'
     else:
@@ -647,7 +655,7 @@ def record_start(fmt="opus", name=None):
         except OSError as e:
             return False, f"cannot create {d!r}: {e}"
         base = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(str(name) or ""))[:80]
-        final = os.path.join(d, f"{base or time.strftime('audio-%Y%m%d-%H%M%S')}.{ 'flac' if fmt == 'flac' else 'webm' }")
+        final = os.path.join(d, f"{base or time.strftime('audio-%Y%m%d-%H%M%S')}.{'flac' if fmt == 'flac' else 'webm'}")
         i = 1
         while os.path.exists(final):
             stem, ext = os.path.splitext(final)
@@ -659,21 +667,36 @@ def record_start(fmt="opus", name=None):
             codec_args = ["-c:a", "flac", "-f", "flac"]
         else:
             codec_args = [
-                "-c:a", "libopus", "-b:a", f"{BITRATE_DEFAULT}", "-vbr", "on",
+                "-c:a",
+                "libopus",
+                "-b:a",
+                f"{BITRATE_DEFAULT}",
+                "-vbr",
+                "on",
                 # small self-contained clusters: a crash loses seconds, not
                 # the whole recording (#102 acceptance)
-                "-cluster_time_limit", "5000",
-                "-cluster_size_limit", "1048576",
-                "-f", "webm",
+                "-cluster_time_limit",
+                "5000",
+                "-cluster_size_limit",
+                "1048576",
+                "-f",
+                "webm",
             ]
         cmd = [
-            "ffmpeg", "-loglevel", "warning",
-            "-f", "pulse", "-i", src,
+            "ffmpeg",
+            "-loglevel",
+            "warning",
+            "-f",
+            "pulse",
+            "-i",
+            src,
             *codec_args,
             part,
         ]
         try:
-            proc = procs.spawn_stream(cmd, env=config._pa_env(), stdin=subprocess.PIPE, preexec_fn=procs.die_with_parent)
+            proc = procs.spawn_stream(
+                cmd, env=config._pa_env(), stdin=subprocess.PIPE, preexec_fn=procs.die_with_parent
+            )
         except Exception as e:
             set_last_error(f"recording start failed: {e}")
             return False, f"ffmpeg start failed: {e}"

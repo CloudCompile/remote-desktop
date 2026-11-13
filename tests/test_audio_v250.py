@@ -413,7 +413,14 @@ def test_record_watchdog_stops_at_cap(monkeypatch, tmp_path):
             return None
 
     audio._rec.update(
-        {"proc": P(), "part": str(part), "path": str(tmp_path / "x.webm"), "name": "x", "started": time.time(), "fmt": "opus"}
+        {
+            "proc": P(),
+            "part": str(part),
+            "path": str(tmp_path / "x.webm"),
+            "name": "x",
+            "started": time.time(),
+            "fmt": "opus",
+        }
     )
     stops = []
     monkeypatch.setattr(audio, "record_stop", lambda: stops.append(1) or {"ok": True})
@@ -477,7 +484,21 @@ def test_diagnostics_shape(pa_env, monkeypatch, tmp_path):
     monkeypatch.setattr(audio, "sinks", lambda: [])
     monkeypatch.setattr(audio, "audio_source", lambda: "x.monitor")
     d = audio.diagnostics()
-    for key in ("ffmpeg", "pactl", "pulse_ok", "selected_sink", "effective_sink", "sinks", "chosen_source",
-                "app_supported", "presets", "captures", "record", "last_error", "notice", "ffmpeg_log"):
+    for key in (
+        "ffmpeg",
+        "pactl",
+        "pulse_ok",
+        "selected_sink",
+        "effective_sink",
+        "sinks",
+        "chosen_source",
+        "app_supported",
+        "presets",
+        "captures",
+        "record",
+        "last_error",
+        "notice",
+        "ffmpeg_log",
+    ):
         assert key in d, key
     assert d["presets"] == audio.QUALITY_PRESETS
