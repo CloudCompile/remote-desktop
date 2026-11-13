@@ -7,8 +7,52 @@ Format: [Keep a Changelog](https://keepachangelog.com/), semver.
 
 ### Planned
 
-- v2.2.0 through v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones,
+- v2.3.0 through v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones,
   release themes and linked issues.
+
+## [2.2.0] — 2026-11-13
+
+### Added
+
+- Direct-touch mode: absolute taps and immediate drag at the touched
+  pixel, selectable against the trackpad layer and persisted (#41).
+- Pinch-to-zoom (1–5×, focal anchoring) with pan when zoomed and
+  double-tap reset; two-finger scroll is unchanged at 1× (#42).
+- Viewport modes: Fit / Fill / 1:1 / Remote-resize (noVNC resizeSession),
+  persisted and reapplied after reconnect (#43).
+- Three-finger horizontal swipe sends Alt+Tab (#44).
+- Optional haptic feedback on taps and long-presses (#45).
+- Gesture customization: pointer speed, scroll speed, tap tolerance and
+  long-press delay sliders, live-applied and persisted (#46).
+- IME composition: composed text is committed via the paste API instead
+  of per-key events; sticky modifiers now apply to the next key (#47).
+- User-editable extra-keys panel (add/remove/reorder, keysym validation,
+  localStorage) (#48).
+- Installable PWA: manifest, service worker with offline shell,
+  install button and iOS hint (#49).
+- Connection quality indicator on the toolbar handle plus a diagnostics
+  section (RTT, reconnect count, viewport, server version) (#50).
+- Dark / light / high-contrast / auto themes with pre-paint application (#51).
+- Orientation lock with graceful degradation and a tablet landscape
+  layout for sheets (#52).
+- Localization: EN/DE/ES/FR for the static shell with instant switching
+  and an English fallback (#54).
+- First-run tour (three dismissible cards, replayable from More) (#56).
+- Toolbar customization: show/hide and reorder actions, long-press to
+  hide with undo (#68).
+
+### Fixed
+
+- iOS Safari pointer/gesture conflicts: page pinch-zoom prevented,
+  touch-action on chrome, stuck-button panic paths (#57).
+- Safe-area and virtual-keyboard insets via visualViewport with
+  debounced keyboard animation handling (#58).
+
+### Accessibility
+
+- Accessible names on icon-only controls, dialog semantics for sheets
+  with focus trap and restore, focus-visible rings, reduced-motion
+  support (#53).
 
 ## [2.1.0] — 2026-11-13
 

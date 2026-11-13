@@ -15,7 +15,7 @@ never hand-maintained. Secrets (marked secret=True) are redacted there.
 import os
 import re
 
-VERSION = "2.1.0"
+VERSION = "2.2.0"
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB_DIR = os.path.join(BASE_DIR, "web")
