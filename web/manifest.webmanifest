@@ -9,6 +9,16 @@
   "scope": "/",
   "background_color": "#161616",
   "theme_color": "#161616",
+  "share_target": {
+    "action": "/share",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "files": [
+        { "name": "files", "accept": ["image/*", "video/*", "audio/*", "application/pdf", "application/zip", "text/*"] }
+      ]
+    }
+  },
   "icons": [
     { "src": "/app/images/icons/novnc-192x192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "/app/images/icons/novnc-192x192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },

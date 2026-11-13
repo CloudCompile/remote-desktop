@@ -360,18 +360,59 @@
   </div>
 
   <div class="sheet" id="shFiles" role="dialog" aria-modal="true" aria-label="Files">
-    <h3><span data-i18n="sheet.files">Files</span> — ~/Downloads</h3>
+    <h3 data-i18n="sheet.files">Files</h3>
+    <div class="row">
+      <select id="fRoot" aria-label="Location (shared root)"></select>
+      <button id="fRefresh" class="step" data-i18n-aria="btn.refresh" aria-label="Refresh">⟳</button>
+    </div>
+    <div class="row" id="fCrumbs" style="flex-wrap:wrap"></div>
+    <div class="row">
+      <input type="text" id="fSearch" data-i18n-ph="files.searchPh" placeholder="Search this folder…" enterkeyhint="search" aria-label="Search files">
+      <button id="fSearchGo" class="step" data-i18n="btn.search">Search</button>
+    </div>
+    <div class="row" id="fWarn" hidden style="background:var(--card2);border-radius:10px;padding:8px 10px">
+      <span class="lbl" id="fWarnTxt" style="flex:1;color:var(--warn,#e6a23c);font-size:12px"></span>
+    </div>
+    <div class="row" id="fDrop" style="border:1px dashed var(--line);border-radius:10px;padding:10px;justify-content:center">
+      <span data-i18n="files.drop" style="color:var(--muted);font-size:12px">Drop files here or use the buttons</span>
+    </div>
     <div class="row">
       <button class="primary" id="upBtn" data-i18n="files.upload">⬆ Upload from phone</button>
       <input type="file" id="upInput" multiple style="display:none">
+      <button id="camBtn" data-i18n="files.camera">📷 Camera</button>
+      <input type="file" id="camInput" accept="image/*" capture="environment" style="display:none">
     </div>
-    <div class="row" id="upProgRow" style="display:none">
-      <div style="flex:1;height:6px;background:#262626;border-radius:3px;overflow:hidden">
-        <div id="upBar" style="height:100%;width:0;background:var(--accent)"></div>
-      </div>
-      <span class="val" id="upPct">0%</span>
+    <div class="row">
+      <button id="fMkdir" data-i18n="files.mkdir">＋ New folder</button>
+      <button id="fSelAll" data-i18n="files.selectAll">Select all</button>
+      <label class="check" style="flex:0 0 auto;font-size:12px"><input type="checkbox" id="fCompress"> <span data-i18n="files.compress">Shrink photos</span></label>
     </div>
-    <div id="fileList"><small style="color:#777">Loading…</small></div>
+    <div class="row" id="fSelRow" hidden>
+      <button id="fDownload" class="primary" data-i18n="files.download">⬇ Download</button>
+      <button id="fRename" data-i18n="files.rename">Rename</button>
+      <button id="fDelete" data-i18n="files.delete">Delete</button>
+    </div>
+    <div class="row" id="fSelRow2" hidden>
+      <button id="fExec" data-i18n="files.exec">⏵ Make executable</button>
+      <button id="fArchive" data-i18n="files.archive">📦 Zip selection</button>
+      <button id="fClearSel" class="step" data-i18n-aria="files.clearSel" aria-label="Clear selection">✕</button>
+    </div>
+    <div id="upQueue"></div>
+    <div id="fileList"><small style="color:#777">…</small></div>
+  </div>
+
+  <div class="sheet" id="shPreview" role="dialog" aria-modal="true" aria-label="Preview">
+    <h3 id="pvTitle">…</h3>
+    <div class="row" id="pvBody" style="justify-content:center;min-height:220px"></div>
+    <div class="row">
+      <button id="pvPrev" class="step" data-i18n-aria="files.prev" aria-label="Previous">‹</button>
+      <button id="pvZoom" class="step" aria-label="Zoom">🔍</button>
+      <button id="pvNext" class="step" data-i18n-aria="files.next" aria-label="Next">›</button>
+    </div>
+    <div class="row">
+      <button id="pvDl" class="primary" data-i18n="files.download">⬇ Download</button>
+      <button id="pvClose" data-i18n="btn.cancel">Close</button>
+    </div>
   </div>
 
   <div class="sheet" id="shMore" role="dialog" aria-modal="true" aria-label="More settings">
@@ -1057,7 +1098,7 @@ paintOrient();
 /* ------------------------------------------------------------------ *
  *  Sheets + toolbar                                                   *
  * ------------------------------------------------------------------ */
-const sheets = [$('shApps'), $('shWins'), $('shAudio'), $('shMore'), $('shStore'), $('shFiles')];
+const sheets = [$('shApps'), $('shWins'), $('shAudio'), $('shMore'), $('shStore'), $('shFiles'), $('shPreview')];
 let statsTimer = null;
 let lastFocused = null;
 // #53: keyboard/switch users get focus moved into an opened sheet and
@@ -2409,86 +2450,476 @@ document.addEventListener('fullscreenchange', () => setTimeout(relayout, 200));
 if (window.visualViewport) visualViewport.addEventListener('resize', relayout);
 
 /* ------------------------------------------------------------------ *
- *  Files: upload / download ~/Downloads on the desktop                *
+ *  Files: shared roots, manager, resumable transfers (#78-#93)        *
  * ------------------------------------------------------------------ */
 const humanSize = n => n >= (1 << 30) ? (n / (1 << 30)).toFixed(1) + ' GB'
   : n >= (1 << 20) ? (n / (1 << 20)).toFixed(1) + ' MB'
   : n >= 1024 ? (n / 1024).toFixed(0) + ' KB' : n + ' B';
+const fmtWhen = ts => { const d = new Date(ts * 1000); return d.toLocaleDateString() + ' ' + d.toLocaleTimeString(); };
+
+let fmRoot = store.get('fmRoot', '') || '';
+let fmPath = '';
+let fmEntries = [];
+let fmSel = new Set();
+let fmSelAnchor = null;
+let fmSort = store.get('fmSort', 'name');
+let fmDesc = store.get('fmDesc', '0') === '1';
+let fmReadOnly = false;
+let fmSearchAbort = null;
+
+async function fmApi(path, opts) {
+  const r = await fetch(path, Object.assign({ cache: 'no-store' }, opts || {}));
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error(j.error || r.status), { status: r.status, payload: j });
+  return j;
+}
+
+function fmSortLabel() {
+  const keys = { name: 'files.sortName', size: 'files.sortSize', mtime: 'files.sortDate', type: 'files.sortType' };
+  return i18nT(keys[fmSort] || 'files.sortName', fmSort) + (fmDesc ? ' ↓' : ' ↑');
+}
 
 async function loadFiles(){
   const box = $('fileList');
   try {
-    const r = await fetch('/api/files', { cache: 'no-store' });
-    const j = await r.json();
+    const q = new URLSearchParams({ root: fmRoot, path: fmPath, sort: fmSort, dir: fmDesc ? 'desc' : 'asc' });
+    const j = await fmApi('/api/files?' + q);
+    fmRoot = j.root;
+    fmReadOnly = !!j.readonly;
+    store.set('fmRoot', fmRoot);
+    $('fRoot').innerHTML = '';
+    for (const r of j.roots || []) {
+      const o = document.createElement('option');
+      o.value = r.id; o.textContent = r.label + (r.readonly ? ' 🔒' : '');
+      if (r.id === j.root) o.selected = true;
+      $('fRoot').appendChild(o);
+    }
+    paintCrumbs(j.root_label || 'Files');
+    paintDisk(j.disk);
+    fmEntries = j.entries || [];
+    if (fmSearchAbort) { fmSearchAbort = null; }
+    fmPaint(box, fmEntries, true);
+  } catch (e) {
     box.textContent = '';
-    if (!(j.files || []).length) {
-      box.innerHTML = '<small style="color:#777">~/Downloads is empty. Upload something from your phone.</small>';
-      return;
-    }
-    for (const f of j.files) {
-      const row = document.createElement('div');
-      row.className = 'frow';
-      const nm = document.createElement('div');
-      nm.className = 'nm'; nm.textContent = f.name; nm.title = f.name;
-      const sz = document.createElement('div');
-      sz.className = 'sz'; sz.textContent = humanSize(f.size);
-      const dl = document.createElement('button');
-      dl.textContent = '⬇'; dl.title = 'Save to phone';
-      dl.setAttribute('aria-label', 'Save ' + f.name + ' to phone');
-      dl.addEventListener('click', () => {
-        location.href = '/api/download?name=' + encodeURIComponent(f.name);
-      });
-      const del = document.createElement('button');
-      del.textContent = '✕'; del.title = 'Delete on desktop';
-      del.setAttribute('aria-label', 'Delete ' + f.name + ' on desktop');
-      del.addEventListener('click', async () => {
-        if (!confirm('Delete ' + f.name + ' on the desktop?')) return;
-        try {
-          await fetch('/api/files/delete', { method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: f.name }) });
-        } catch (_) {}
-        loadFiles();
-      });
-      row.appendChild(nm); row.appendChild(sz); row.appendChild(dl); row.appendChild(del);
-      box.appendChild(row);
-    }
-  } catch (_) { box.innerHTML = '<small style="color:#777">Could not list files.</small>'; }
+    const err = document.createElement('small');
+    err.style.color = '#777'; err.textContent = e.message || 'Could not list files.';
+    box.appendChild(err);
+  }
 }
 
-function uploadFile(f){
-  return new Promise(res => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', '/api/upload?name=' + encodeURIComponent(f.name));
-    $('upProgRow').style.display = 'flex';
-    xhr.upload.addEventListener('progress', ev => {
-      if (!ev.lengthComputable) return;
-      const pct = Math.round(ev.loaded / ev.total * 100);
-      $('upBar').style.width = pct + '%';
-      $('upPct').textContent = pct + '% · ' + humanSize(ev.loaded);
+function paintDisk(disk){
+  const row = $('fWarn');
+  if (!disk) { row.hidden = true; return; }
+  const total = disk.quota ? disk.quota : disk.total;
+  const used = disk.quota ? (disk.quota_used || 0) : disk.used;
+  const pct = total ? Math.round(used / total * 100) : 0;
+  if (pct >= (disk.warn_pct || 90)) {
+    $('fWarnTxt').textContent = disk.quota
+      ? i18nT('files.warnQuota', 'Root is nearly full') + ` (${pct}% · ${humanSize(used)}/${humanSize(disk.quota)})`
+      : i18nT('files.warnDisk', 'Disk is nearly full') + ` (${pct}%)`;
+    row.hidden = false;
+  } else row.hidden = true;
+}
+
+function paintCrumbs(rootLabel){
+  const box = $('fCrumbs');
+  box.textContent = '';
+  const mk = (label, target) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.style.flex = '0 1 auto'; b.style.minHeight = '34px'; b.style.fontSize = '12px';
+    b.setAttribute('aria-label', label);
+    if (target === fmPath) b.classList.add('primary');
+    b.addEventListener('click', () => { fmPath = target; fmSel.clear(); paintSelRow(); loadFiles(); });
+    box.appendChild(b);
+  };
+  mk(rootLabel, '');
+  let acc = '';
+  for (const seg of fmPath.split('/').filter(Boolean)) {
+    acc += (acc ? '/' : '') + seg;
+    mk('› ' + seg, acc);
+  }
+}
+
+const typeIcon = e => e.type === 'dir' ? '📁' : e.type === 'link' ? '🔗' : '.jpg.jpeg.png.gif.webp.bmp.svg'.includes(ext(e.name)) ? '🖼️'
+  : '.mp4.webm.mkv.mov'.includes(ext(e.name)) ? '🎞️' : '.mp3.wav.ogg.flac.m4a'.includes(ext(e.name)) ? '🎵'
+  : '.pdf'.includes(ext(e.name)) ? '📕' : '📄';
+const ext = n => '.' + (n.split('.').pop() || '').toLowerCase();
+
+function fmPaint(box, entries, mainView){
+  box.textContent = '';
+  $('upQueue').textContent = '';
+  paintQueue();
+  if (!entries.length) {
+    const s = document.createElement('small');
+    s.style.color = '#777';
+    s.textContent = i18nT('files.empty', 'This folder is empty.');
+    box.appendChild(s);
+    return;
+  }
+  for (const e of entries) {
+    const row = document.createElement('div');
+    row.className = 'frow';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = fmSel.has(e.name);
+    cb.setAttribute('aria-label', (e.type === 'dir' ? 'Folder ' : 'File ') + e.name);
+    cb.addEventListener('click', ev => { ev.stopPropagation(); });
+    cb.addEventListener('change', () => {
+      if (cb.checked) fmSel.add(e.name); else fmSel.delete(e.name);
+      paintSelRow();
     });
-    xhr.addEventListener('load', () => {
-      status(xhr.status === 200 ? 'Uploaded ' + f.name : 'Upload failed (' + xhr.status + ')', xhr.status !== 200);
-      $('upProgRow').style.display = 'none';
-      $('upBar').style.width = '0'; $('upPct').textContent = '0%';
-      res();
+    const nm = document.createElement('div');
+    nm.className = 'nm';
+    nm.textContent = typeIcon(e) + ' ' + e.name;
+    nm.title = `${e.name} · ${e.mode || ''} · ${e.owner || ''} · ${fmtWhen(e.mtime)}`;
+    nm.style.cursor = e.type === 'dir' ? 'pointer' : 'default';
+    nm.addEventListener('click', () => {
+      if (e.type === 'dir') { fmPath = (fmPath ? fmPath + '/' : '') + e.name; fmSel.clear(); paintSelRow(); loadFiles(); }
     });
-    xhr.addEventListener('error', () => {
-      status('Upload failed', true);
-      $('upProgRow').style.display = 'none';
-      res();
+    const meta = document.createElement('div');
+    meta.className = 'sz';
+    meta.textContent = (e.type === 'dir' ? '—' : humanSize(e.size)) + ' · ' + fmtWhen(e.mtime);
+    row.appendChild(cb); row.appendChild(nm); row.appendChild(meta);
+    if (mainView && fmReadOnly) {
+      const ro = document.createElement('span');
+      ro.className = 'sz'; ro.textContent = '🔒'; ro.title = i18nT('files.readonly', 'Read-only');
+      row.appendChild(ro);
+    }
+    if (e.type !== 'dir') {
+      const eye = document.createElement('button');
+      eye.textContent = '👁'; eye.setAttribute('aria-label', 'Preview ' + e.name);
+      eye.addEventListener('click', () => previewEntry(e));
+      row.appendChild(eye);
+      const dl = document.createElement('button');
+      dl.textContent = '⬇'; dl.setAttribute('aria-label', 'Save ' + e.name + ' to phone');
+      dl.addEventListener('click', () => downloadOne(e));
+      row.appendChild(dl);
+    }
+    if (mainView && fmSel.has(e.name)) row.style.background = 'var(--card2)';
+    box.appendChild(row);
+  }
+}
+
+function paintSelRow(){
+  const on = fmSel.size > 0;
+  $('fSelRow').hidden = !on;
+  $('fSelRow2').hidden = !on;
+  const onlyFiles = [...fmSel].every(n => (fmEntries.find(e => e.name === n) || {}).type === 'file');
+  $('fExec').hidden = !(on && onlyFiles && fmSel.size === 1) || fmReadOnly;
+  $('fRename').hidden = fmSel.size !== 1 || fmReadOnly;
+}
+
+function downloadOne(e){
+  const url = '/api/files/content?root=' + encodeURIComponent(fmRoot) + '&path=' + encodeURIComponent((fmPath ? fmPath + '/' : '') + e.name);
+  const a = document.createElement('a');
+  a.href = url; a.download = e.name;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+function previewEntry(e){
+  const rel = (fmPath ? fmPath + '/' : '') + e.name;
+  const url = '/api/files/content?root=' + encodeURIComponent(fmRoot) + '&path=' + encodeURIComponent(rel) + '&inline=1';
+  $('pvTitle').textContent = e.name;
+  const body = $('pvBody');
+  body.textContent = '';
+  let node = null;
+  const mime = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp' }[e.name.split('.').pop().toLowerCase()];
+  if (mime) node = document.createElement('img');
+  else if (ext(e.name).match(/^\.(mp4|webm|mkv|mov)$/)) node = document.createElement('video');
+  else if (ext(e.name).match(/^\.(mp3|wav|ogg|flac|m4a)$/)) node = document.createElement('audio');
+  else if (ext(e.name) === '.pdf') { node = document.createElement('iframe'); node.src = url; }
+  if (node && node.tagName !== 'IFRAME') { node.src = url; node.controls = node.tagName !== 'IMG'; node.alt = e.name; node.style.maxWidth = '100%'; node.style.maxHeight = '50vh'; }
+  if (!node) {
+    const s = document.createElement('small');
+    s.style.color = '#777';
+    s.textContent = i18nT('files.noPreview', 'No preview for this type — download it instead.');
+    body.appendChild(s);
+  } else body.appendChild(node);
+  $('pvDl').onclick = () => downloadOne(e);
+  const prev = document.createElement('button');
+  prev.hidden = true;
+  openSheet($('shPreview'));
+}
+
+/* queue (#80/#88): per-file state, bounded concurrency, pause/retry/cancel */
+const upQueue = [];
+const UP_CONCURRENCY = 2;
+let upActive = 0;
+
+function paintQueue(){
+  const box = $('upQueue');
+  if (!box) return;
+  box.textContent = '';
+  for (const it of upQueue) {
+    const row = document.createElement('div');
+    row.className = 'frow';
+    const nm = document.createElement('div');
+    nm.className = 'nm';
+    nm.textContent = (it.state === 'running' ? '⬆ ' : it.state === 'paused' ? '⏸ ' : it.state === 'failed' ? '⚠ ' : it.state === 'done' ? '✓ ' : '✕ ') + it.file.name;
+    const bar = document.createElement('div');
+    bar.style.cssText = 'flex:1;height:4px;background:var(--card2);border-radius:2px;overflow:hidden';
+    const fill = document.createElement('div');
+    fill.style.cssText = `height:100%;width:${it.pct || 0}%;background:var(--accent)`;
+    bar.appendChild(fill);
+    const sz = document.createElement('div');
+    sz.className = 'sz';
+    sz.textContent = `${humanSize(it.ack || 0)}${it.file.size ? ' / ' + humanSize(it.file.size) : ''}${it.retries ? ' · ↻' + it.retries : ''}`;
+    row.appendChild(nm); row.appendChild(bar); row.appendChild(sz);
+    if (it.state === 'running' || it.state === 'paused') {
+      const pb = document.createElement('button');
+      pb.textContent = it.state === 'paused' ? '▶' : '⏸';
+      pb.setAttribute('aria-label', (it.state === 'paused' ? 'Resume ' : 'Pause ') + it.file.name);
+      pb.addEventListener('click', () => { it.paused = it.state !== 'paused'; if (it.paused && it.state === 'running') it.state = 'paused'; else if (!it.paused && it.state === 'paused') { it.state = 'running'; it.wake && it.wake(); } paintQueue(); });
+      row.appendChild(pb);
+    }
+    if (it.state === 'failed') {
+      const rb = document.createElement('button');
+      rb.textContent = '↻'; rb.setAttribute('aria-label', 'Retry ' + it.file.name);
+      rb.addEventListener('click', () => { it.state = 'running'; it.session = null; pumpUploads(); paintQueue(); });
+      row.appendChild(rb);
+    }
+    if (it.state !== 'done') {
+      const cb = document.createElement('button');
+      cb.textContent = '✕'; cb.setAttribute('aria-label', 'Cancel ' + it.file.name);
+      cb.addEventListener('click', () => { it.cancelled = true; if (it.wake) it.wake(); upQueue.splice(upQueue.indexOf(it), 1); if (it.session) fmApi('/api/files/upload/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session: it.session }) }).catch(() => {}); paintQueue(); });
+      row.appendChild(cb);
+    }
+    box.appendChild(row);
+  }
+}
+
+async function sha256Hex(buf){
+  const d = await crypto.subtle.digest('SHA-256', buf);
+  return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function queueUploads(files){
+  for (const f of files) upQueue.push({ file: f, state: 'running', ack: 0, pct: 0, retries: 0 });
+  pumpUploads();
+}
+
+async function pumpUploads(){
+  while (upActive < UP_CONCURRENCY) {
+    const it = upQueue.find(x => x.state === 'running' && !x.started);
+    if (!it) return;
+    it.started = true; upActive++;
+    runUpload(it).finally(() => { upActive--; it.started = false; if (it.state === 'running') it.state = 'failed'; paintQueue(); pumpUploads(); });
+  }
+}
+
+async function runUpload(it){
+  try {
+    const dir = fmPath;
+    let init = await fmApi('/api/files/upload/init', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ root: fmRoot, path: dir, name: it.file.name, size: it.file.size, chunk_size: 1 << 20 }),
     });
-    xhr.send(f);
+    if (init.exists && !it.overwrite) {
+      const choice = prompt(i18nT('files.exists', 'A file with this name exists — enter a new name, empty = overwrite'), it.file.name);
+      if (choice === null) { it.state = 'cancelled'; return; }
+      if (choice.trim() && choice !== it.file.name) it.file = new File([it.file], choice.trim(), { type: it.file.type });
+      else it.overwrite = true;
+      it.started = false; it.state = 'running';
+      return;
+    }
+    it.session = init.session;
+    let offset = init.offset || 0;
+    const CHUNK = init.chunk_size || (1 << 20);
+    while (offset < it.file.size) {
+      if (it.cancelled) return;
+      while (it.state === 'paused') await new Promise(w => { it.wake = w; });
+      if (it.cancelled || it.state === 'failed') return;
+      const chunk = await it.file.slice(offset, offset + CHUNK).arrayBuffer();
+      const sum = await sha256Hex(chunk);
+      let acked = false;
+      for (let tries = 0; tries < 3 && !acked; tries++) {
+        const r = await fmApi(`/api/files/upload/chunk?session=${it.session}&offset=${offset}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'X-Chunk-Sha256': sum },
+          body: chunk,
+        });
+        if (r.offset >= offset + chunk.byteLength) acked = true;
+        else { it.retries++; await new Promise(w => setTimeout(w, 500 * (tries + 1))); }
+      }
+      if (!acked) throw new Error('chunk not acknowledged');
+      offset += chunk.byteLength;
+      it.ack = offset;   // progress = bytes the SERVER acknowledged (#80)
+      it.pct = it.file.size ? Math.round(offset / it.file.size * 100) : 100;
+      paintQueue();
+    }
+    await fmApi('/api/files/upload/complete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session: it.session }) });
+    it.state = 'done'; it.pct = 100;
+    status(i18nT('files.uploaded', 'Uploaded') + ' ' + it.file.name);
+    loadFiles();
+  } catch (e) {
+    if (it.cancelled) return;
+    it.state = 'failed';
+    status((e.message || 'Upload failed') + ': ' + it.file.name, true);
+  } finally {
+    paintQueue();
+  }
+}
+
+/* search (#81): bounded recursive, cancellable */
+async function runSearch(){
+  const q = $('fSearch').value.trim();
+  if (fmSearchAbort) fmSearchAbort.abort();
+  if (!q) { loadFiles(); return; }
+  fmSearchAbort = new AbortController();
+  const box = $('fileList');
+  box.textContent = '';
+  const s = document.createElement('small');
+  s.style.color = '#777'; s.textContent = i18nT('files.searching', 'Searching…');
+  box.appendChild(s);
+  try {
+    const j = await fmApi(`/api/files/search?root=${encodeURIComponent(fmRoot)}&path=${encodeURIComponent(fmPath)}&q=${encodeURIComponent(q)}`, { signal: fmSearchAbort.signal });
+    box.textContent = '';
+    const head = document.createElement('div');
+    head.className = 'sz';
+    head.textContent = `${j.matches.length}${j.truncated ? '+' : ''} · ` + i18nT('files.results', 'matches');
+    box.appendChild(head);
+    fmSel.clear();
+    fmPaint(box, j.matches.map(m => ({ ...m, dir: m.dir })), false);
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    box.textContent = '';
+    const err = document.createElement('small');
+    err.style.color = '#777'; err.textContent = e.message || 'Search failed.';
+    box.appendChild(err);
+  }
+}
+
+/* drag & drop (#80) */
+function wireDrop(){
+  const zone = $('fDrop');
+  for (const [ev, on] of [['dragover', e => { e.preventDefault(); zone.style.background = 'var(--card2)'; }], ['dragleave', () => { zone.style.background = ''; }]]) {
+    zone.addEventListener(ev, on);
+  }
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.style.background = '';
+    const files = [...(e.dataTransfer && e.dataTransfer.files || [])];
+    if (files.length) queueUploads(files);
   });
 }
 
+/* optional client-side photo compression (#87) */
+async function maybeCompress(file){
+  if (!$('fCompress') || !$('fCompress').checked) return file;
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type) || file.size < 1.5 * (1 << 20)) return file;
+  try {
+    const bmp = await createImageBitmap(file);
+    const max = 2048;
+    const sc = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * sc); c.height = Math.round(bmp.height * sc);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.85));
+    if (blob && blob.size < file.size) {
+      status(`${i18nT('files.compressed', 'Compressed')} ${humanSize(file.size)} → ${humanSize(blob.size)}`);
+      return new File([blob], file.name.replace(/\.(jpe?g|png|webp)$/i, '.jpg'), { type: 'image/jpeg' });
+    }
+  } catch (_) {}
+  return file;
+}
+
+async function addFiles(list, compress){
+  const out = [];
+  for (const f of list) out.push(await (compress ? maybeCompress(f) : f));
+  queueUploads(out);
+}
+
+/* ---- wiring ---- */
 $('upBtn').addEventListener('click', () => $('upInput').click());
-$('upInput').addEventListener('change', async e => {
-  const files = [...e.target.files];
-  e.target.value = '';
-  for (const f of files) await uploadFile(f);
+$('camBtn').addEventListener('click', () => $('camInput').click());
+$('upInput').addEventListener('change', async e => { const f = [...e.target.files]; e.target.value = ''; await addFiles(f, false); });
+$('camInput').addEventListener('change', async e => { const f = [...e.target.files]; e.target.value = ''; await addFiles(f, true); });
+$('fRoot').addEventListener('change', e => { fmRoot = e.target.value; fmPath = ''; fmSel.clear(); paintSelRow(); loadFiles(); });
+$('fRefresh').addEventListener('click', () => loadFiles());
+$('fSearchGo').addEventListener('click', runSearch);
+$('fSearch').addEventListener('keydown', e => { if (e.key === 'Enter') runSearch(); });
+wireDrop();
+
+$('fMkdir').addEventListener('click', async () => {
+  if (fmReadOnly) return;
+  const name = prompt(i18nT('files.newFolder', 'Folder name'));
+  if (!name) return;
+  try {
+    await fmApi('/api/files/mkdir', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ root: fmRoot, path: (fmPath ? fmPath + '/' : '') + name }) });
+    loadFiles();
+  } catch (e) { status(e.message, true); }
+});
+
+$('fSelAll').addEventListener('click', () => {
+  if (fmSel.size === fmEntries.length) fmSel.clear();
+  else fmSel = new Set(fmEntries.map(e => e.name));
+  paintSelRow(); loadFiles();
+});
+$('fClearSel').addEventListener('click', () => { fmSel.clear(); paintSelRow(); loadFiles(); });
+
+$('fDelete').addEventListener('click', async () => {
+  if (!fmSel.size || fmReadOnly) return;
+  if (!confirm(i18nT('files.confirmDelete', 'Delete the selected items on the desktop?'))) return;
+  try {
+    const j = await fmApi('/api/files/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ root: fmRoot, paths: [...fmSel] }) });
+    if (j.failed && j.failed.length) status(`${j.failed.length} × ` + i18nT('files.someFailed', 'could not be deleted'), true);
+    fmSel.clear();
+  } catch (e) { status(e.message, true); }
+  paintSelRow(); loadFiles();
+});
+
+$('fRename').addEventListener('click', async () => {
+  if (fmSel.size !== 1 || fmReadOnly) return;
+  const old = [...fmSel][0];
+  const name = prompt(i18nT('files.newName', 'New name'), old);
+  if (!name || name === old) return;
+  try {
+    await fmApi('/api/files/rename', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ root: fmRoot, path: (fmPath ? fmPath + '/' : '') + old, name }) });
+    fmSel.delete(old);
+  } catch (e) { status(e.message, true); }
+  paintSelRow(); loadFiles();
+});
+
+$('fDownload').addEventListener('click', () => {
+  const sel = [...fmSel].map(n => fmEntries.find(e => e.name === n)).filter(Boolean);
+  if (sel.length === 1 && sel[0].type === 'file') return downloadOne(sel[0]);
+  if (!sel.length) return;
+  // anything multi or a folder: zip it first (#85)
+  archiveSelection(sel);
+});
+
+async function archiveSelection(sel){
+  try {
+    const fmt = 'zip';
+    const base = sel.length === 1 ? sel[0].name.replace(/\/$/, '') : 'selection';
+    const j = await fmApi('/api/files/archive', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ root: fmRoot, paths: [...fmSel], format: fmt, name: base }) });
+    const a = document.createElement('a');
+    a.href = '/api/files/content?root=' + encodeURIComponent(fmRoot) + '&path=' + encodeURIComponent(j.path);
+    a.download = j.path.split('/').pop();
+    document.body.appendChild(a); a.click(); a.remove();
+    fmSel.clear(); paintSelRow();
+    setTimeout(loadFiles, 300);
+  } catch (e) { status(e.message, true); }
+}
+
+$('fArchive').addEventListener('click', () => archiveSelection([...fmSel]));
+
+$('fExec').addEventListener('click', async () => {
+  if (fmSel.size !== 1 || fmReadOnly) return;
+  const name = [...fmSel][0];
+  const entry = fmEntries.find(e => e.name === name) || {};
+  const hasX = entry.mode && entry.mode.match(/[xst]/g);
+  const mode = hasX ? '644' : '755';
+  if (!confirm((hasX ? i18nT('files.confirmUnexec', 'Remove the executable bit from ') : i18nT('files.confirmExec', 'Mark as executable: ')) + name)) return;
+  try {
+    await fmApi('/api/files/chmod', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ root: fmRoot, path: (fmPath ? fmPath + '/' : '') + name, mode }) });
+    status(name + ' → ' + mode);
+  } catch (e) { status(e.message, true); }
   loadFiles();
 });
+
+$('pvClose').addEventListener('click', () => { closeSheets(); });
+$('pvNext').addEventListener('click', () => { const i = fmEntries.findIndex(e => e.name === $('pvTitle').textContent); for (let k = 1; k <= fmEntries.length; k++) { const n = fmEntries[(i + k) % fmEntries.length]; if (n && n.type === 'file') return previewEntry(n); } });
+$('pvPrev').addEventListener('click', () => { const i = fmEntries.findIndex(e => e.name === $('pvTitle').textContent); for (let k = 1; k <= fmEntries.length; k++) { const n = fmEntries[(i - k + fmEntries.length) % fmEntries.length]; if (n && n.type === 'file') return previewEntry(n); } });
+$('pvZoom').addEventListener('click', () => { const img = $('pvBody').querySelector('img'); if (img) img.style.width = img.style.width ? '' : '160%'; });
 
 /* ------------------------------------------------------------------ *
  *  System stats (More sheet, polled while open)                       *

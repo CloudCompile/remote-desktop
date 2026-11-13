@@ -62,7 +62,7 @@ only way the server starts. Decisions behind this layout: [ADR-0001](adr/ADR-000
 | Window focus | `xdotool search --onlyvisible --class/--classname/--name`; prefers the WM_CLASS *instance* so Chrome's browser window is not confused with its `--app` windows |
 | Audio | `ffmpeg -f pulse` on the monitor source; Opus/WebM or PCM, chunked HTTP |
 | Clipboard | `xclip` for CLIPBOARD and PRIMARY; a watcher thread records changes into `.cliphistory.json` (100 items) |
-| Files | `~/Downloads`, basename-only, `realpath` containment, 2 GB upload cap |
+| Files | shared roots (`RD_FILES_ROOTS`/`RD_FILES_DIR`), fd-contained paths (`openat` + `O_NOFOLLOW`, #91), chunked resumable uploads, range downloads, quotas; details in [FILES.md](FILES.md) |
 | Stats | `/proc/stat`, `/proc/meminfo`, `/proc/uptime`, `shutil.disk_usage` |
 
 ## Frontend (`web/`)
