@@ -368,6 +368,12 @@
       <div class="check"><input type="checkbox" id="wake" checked></div>
     </div>
     <hr>
+    <h3 data-i18n="more.orientation">Orientation</h3>
+    <div class="row">
+      <button id="orientBtn" aria-pressed="false">Lock landscape</button>
+    </div>
+    <div class="row"><label id="orientStatus"></label></div>
+    <hr>
     <h3>Screen edges</h3>
     <div class="row">
       <label>Reserved edge for system nav bar (px · auto = none unless the OS overlays)</label>
@@ -804,6 +810,39 @@ $('themeSel').addEventListener('change', e => {
     'Theme: ' + e.target.value);
 });
 applyTheme();
+
+/* ------------------------------------------------------------------ *
+ *  Orientation lock (#52): best effort — the API needs fullscreen on  *
+ *  most browsers, so a rejected lock degrades to a status message.    *
+ * ------------------------------------------------------------------ */
+let orientLocked = false;
+function paintOrient(){
+  $('orientBtn').setAttribute('aria-pressed', orientLocked ? 'true' : 'false');
+  $('orientBtn').textContent = orientLocked ? 'Unlock orientation' : 'Lock landscape';
+}
+$('orientBtn').addEventListener('click', async () => {
+  if (!screen.orientation || !screen.orientation.lock) {
+    $('orientStatus').textContent = 'Orientation lock is not supported on this browser.';
+    return;
+  }
+  try {
+    if (orientLocked) {
+      await screen.orientation.unlock();
+      orientLocked = false;
+      $('orientStatus').textContent = 'Orientation unlocked.';
+    } else {
+      await screen.orientation.lock('landscape');
+      orientLocked = true;
+      $('orientStatus').textContent = 'Locked to landscape.';
+    }
+  } catch (e) {
+    orientLocked = false;
+    $('orientStatus').textContent =
+      'Lock rejected — most browsers only allow it in fullscreen or an installed app.';
+  }
+  paintOrient();
+});
+paintOrient();
 
 /* ------------------------------------------------------------------ *
  *  Sheets + toolbar                                                   *
