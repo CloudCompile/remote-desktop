@@ -46,7 +46,7 @@
   #bar button svg{width:22px;height:22px;fill:currentColor}
   #bar button.on{background:var(--accent);color:#fff}
   /* grab handle shown while the toolbar is hidden; tap to reveal */
-  #barHandle{position:absolute;left:50%;bottom:calc(var(--ib) + 8px);z-index:11;
+  #barHandle{position:absolute;left:50%;bottom:calc(var(--ib) + var(--ikb,0px) + 8px);z-index:11;
              transform:translateX(-50%);display:flex;align-items:center;justify-content:center;gap:6px;
              height:32px;padding:0 16px;border:1px solid rgba(255,255,255,.3);border-radius:16px;
              background:rgba(42,102,102,.94);color:#fff;font-size:12px;font-weight:600;
@@ -55,6 +55,9 @@
   #barHandle::before{content:'▲';font-size:10px;opacity:.95}
   #barHandle:active{background:#3a8c8c;transform:translateX(-50%) scale(.96)}
   #barHandle.hidden{opacity:0;pointer-events:none;transform:translateX(-50%) translateY(6px)}
+  /* connection quality dot (#50): green <300 ms, amber <1 s, red worse */
+  #netDot{width:8px;height:8px;border-radius:50%;background:#777;flex:0 0 auto}
+  #netDot.good{background:#3c6}#netDot.fair{background:#fb0}#netDot.poor,#netDot.down{background:#f44}
 
   /* menus drop from the TOP of the screen */
   .backdrop{position:absolute;inset:0;z-index:20;background:rgba(0,0,0,.45);opacity:0;pointer-events:none;
@@ -165,7 +168,9 @@
   <div id="screen"></div>
   <div id="status"></div>
 
-  <button id="barHandle" class="hidden" type="button" title="Show controls">Controls</button>
+  <button id="barHandle" class="hidden" type="button" title="Show controls" aria-label="Show controls">
+    <span id="netDot" aria-hidden="true"></span><span data-i18n="bar.controls">Controls</span>
+  </button>
   <div id="bar">
     <button id="bApps"><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg>Apps</button>
     <button id="bStore"><svg viewBox="0 0 24 24"><path d="M7 18a2 2 0 100 4 2 2 0 000-4zm10 0a2 2 0 100 4 2 2 0 000-4zM7.2 14h9.6c.75 0 1.4-.4 1.7-1.1l3.3-6.9-1.8-.9L16.8 12H7.3L4.3 4H1v2h2l3.6 7.6-1.4 2.5C4.5 17.4 5.5 19 7 19h12v-2H7.2l1-2z"/></svg>Store</button>
@@ -255,6 +260,16 @@
       <span class="val" id="zoomVal">100%</span>
     </div>
     <div class="row"><label id="vpScale"></label></div>
+    <hr>
+    <h3 data-i18n="more.connection">Connection</h3>
+    <div class="stats" id="connBox">
+      <div class="stat"><span class="lbl">RTT</span><span class="val" id="connRtt" style="flex:1;text-align:left">—</span></div>
+      <div class="stat"><span class="lbl">Reconnects</span><span class="val" id="connReconnects" style="flex:1;text-align:left">0</span></div>
+      <div class="stat"><span class="lbl">Viewport</span><span class="val" id="connViewport" style="flex:1;text-align:left">—</span></div>
+      <div class="stat"><span class="lbl">Server</span><span class="val" id="connVersion" style="flex:1;text-align:left">—</span></div>
+      <div class="stat"><span class="lbl">Last drop</span><span class="val" id="connReason" style="flex:1;text-align:left">—</span></div>
+      <div class="stat"><span class="lbl">Browser</span><span class="val" id="connUA" style="flex:1;text-align:left;word-break:break-all;white-space:normal;font-size:10.5px"></span></div>
+    </div>
     <div class="row">
       <label>Desktop width (text size)</label>
       <select id="dw">
@@ -558,6 +573,8 @@ function connect(){
     reconnectDelay = 1000;
     $('overlay').classList.add('hide');
     status('Connected');
+    setQuality('');                      // unknown until the first ping
+    startPing();                         // quality monitor every 5 s (#50)
     if (touchReady && window.__touch?.setRfb) window.__touch.setRfb(rfb);  // re-bind touch layer
     else initTouchOnce();
     applyVpMode();
@@ -568,6 +585,10 @@ function connect(){
   rfb.addEventListener('disconnect', e => {
     connected = false;
     releaseWakeLock();
+    stopPing();
+    reconnectCount++;
+    lastDropReason = (e.detail && e.detail.reason) ? String(e.detail.reason)
+      : (e.detail && e.detail.clean ? 'clean' : 'unknown');
     if (e.detail.clean || userDisconnected) {
       status('Disconnected');
       $('overlay').classList.remove('hide');
@@ -642,6 +663,44 @@ document.addEventListener('visibilitychange', () => {
 });
 
 /* ------------------------------------------------------------------ *
+ *  Connection quality + reconnect diagnostics (#50)                   *
+ * ------------------------------------------------------------------ */
+let rttMs = null, reconnectCount = 0, lastDropReason = '—', serverVersion = '—', pingTimer = null;
+function setQuality(cls){
+  const dot = $('netDot');
+  if (!dot) return;
+  dot.className = cls;   // good | fair | poor | down | '' (unknown)
+}
+async function pingHealth(){
+  if (!connected || document.hidden) return;
+  const t0 = performance.now();
+  try {
+    const r = await fetch('/api/health?ping=' + Date.now(), { cache: 'no-store' });
+    if (r.status === 401) { location.href = '/login'; return; }
+    rttMs = Math.round(performance.now() - t0);
+    try { serverVersion = (await r.json()).version || serverVersion; } catch (_) {}
+    setQuality(rttMs < 300 ? 'good' : rttMs < 1000 ? 'fair' : 'poor');
+  } catch (_) {
+    rttMs = null;
+    setQuality('down');
+  }
+  updateConnBox();
+}
+function updateConnBox(){
+  if (!$('connRtt')) return;
+  $('connRtt').textContent = rttMs === null ? (connected ? 'measuring…' : 'disconnected') : rttMs + ' ms';
+  $('connReconnects').textContent = String(reconnectCount);
+  const r = appEl.getBoundingClientRect();
+  $('connViewport').textContent = `${Math.round(r.width)}×${Math.round(r.height)}` +
+    (innerWidth > innerHeight ? ' (landscape)' : ' (portrait)');
+  $('connVersion').textContent = serverVersion;
+  $('connReason').textContent = lastDropReason;
+  $('connUA').textContent = navigator.userAgent;
+}
+function startPing(){ clearInterval(pingTimer); pingHealth(); pingTimer = setInterval(pingHealth, 5000); }
+function stopPing(){ clearInterval(pingTimer); pingTimer = null; setQuality('down'); }
+
+/* ------------------------------------------------------------------ *
  *  Sheets + toolbar                                                   *
  * ------------------------------------------------------------------ */
 const sheets = [$('shApps'), $('shAudio'), $('shMore'), $('shStore'), $('shFiles')];
@@ -666,9 +725,10 @@ $('bMore').addEventListener('click', () => {
   openSheet($('shMore'));
   loadClipHistory();
   loadStats();
+  updateConnBox();
   if (typeof clipPollStart === 'function') clipPollStart();
   if (statsTimer) clearInterval(statsTimer);
-  statsTimer = setInterval(loadStats, 3000);
+  statsTimer = setInterval(() => { loadStats(); updateConnBox(); }, 3000);
 });
 $('bFull').addEventListener('click', async () => {
   try {
