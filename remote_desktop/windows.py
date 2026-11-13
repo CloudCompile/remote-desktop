@@ -293,7 +293,8 @@ def _is_actionable(hid):
     if chk is not None and chk == int(hid):
         return False, "protected window"
     _, cls, _ = procs._run(["xprop", "-id", str(hid), "WM_CLASS"], timeout=3)
-    if "=" not in cls or '"' not in cls:
+    m = re.search(r'=\s*"([^"]*)",\s*"([^"]*)"', cls or "")
+    if not m or not (m.group(1) or m.group(2)):
         return False, "not a managed application window"
     return True, None
 
