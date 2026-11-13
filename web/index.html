@@ -613,10 +613,32 @@ function applyInsets(){
   root.style.setProperty('--ib', ins.b + 'px');
   root.style.setProperty('--il', ins.l + 'px');
   root.style.setProperty('--ir', ins.r + 'px');
+  updateKbInset();
   $('navVal').textContent = store.get('nav', null) !== null ? store.get('nav') : 'auto';
   const r = appEl.getBoundingClientRect();
   $('info').textContent = `${how} · view ${Math.round(r.width)}×${Math.round(r.height)} · window ${innerWidth}×${innerHeight}`;
 }
+
+/* Keyboard inset (#58): visualViewport.height shrinks when the on-screen
+   keyboard opens. The canvas keeps the layout viewport on purpose —
+   resizing it would re-scale the remote desktop and offset the pointer
+   mapping — while the shell chrome (toolbar, handle, status, toast and
+   the extra-keys bar) lifts above the keyboard via --ikb. */
+function updateKbInset(){
+  let kb = 0;
+  if (window.visualViewport) {
+    kb = Math.max(0, Math.round(innerHeight - visualViewport.height));
+    if (kb < 120) kb = 0;   // ignore URL-bar collapse and rubber-banding
+  }
+  root.style.setProperty('--ikb', kb + 'px');
+}
+if (window.visualViewport) {
+  visualViewport.addEventListener('resize', updateKbInset);
+  visualViewport.addEventListener('scroll', updateKbInset);
+}
+['focusin', 'focusout'].forEach(ev =>
+  document.addEventListener(ev, () => { setTimeout(updateKbInset, 350); setTimeout(updateKbInset, 900); }));
+addEventListener('orientationchange', () => setTimeout(updateKbInset, 300));
 
 /* ------------------------------------------------------------------ *
  *  Remote desktop size: same proportions as the visible area          *
