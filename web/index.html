@@ -5,85 +5,151 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Remote">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#161616">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/app/images/icons/novnc-152x152.png">
+<link rel="icon" href="/app/images/icons/novnc-32x32.png" type="image/png">
 <title>Remote Desktop</title>
+<script>
+/* apply the stored theme before first paint (#51) — no flash of the wrong theme */
+(function(){
+  try {
+    var p = localStorage.getItem('rd_theme') || 'dark';
+    if (p === 'auto') p = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', p);
+  } catch (_) {}
+})();
+</script>
 <style>
-  :root{--it:0px;--ib:0px;--il:0px;--ir:0px;--accent:#2a6;--sheet:#161616}
-  html,body{margin:0;padding:0;height:100%;background:#000;color:#eee;font-family:system-ui,-apple-system,sans-serif;
+  /* theme variables (#51): dark is the default; light and high-contrast
+     are selected via html[data-theme]; "auto" resolves in JS (pre-paint
+     script below) so the wrong theme can never flash on load. */
+  :root{
+    --it:0px;--ib:0px;--ikb:0px;--il:0px;--ir:0px;
+    --accent:#2a6;--accent-fg:#fff;
+    --bg:#000;--fg:#eee;--muted:#999;--faint:#777;
+    --sheet:#161616;--card:#2a2a2a;--card2:#333;--line:#262626;--grip:#444;
+    --chip:#262626;--chip-fg:#bbb;
+    --scrim:rgba(0,0,0,.45);--pill:rgba(16,16,16,.9);
+    --ok:#9c9;--err:#f88;
+    --handle-bg:rgba(42,102,102,.94);--handle-active:#3a8c8c;
+    --bar-btn:rgba(28,28,28,.92);
+    --bar-grad:rgba(0,0,0,.55);
+    --shadow:rgba(0,0,0,.55);
+    --dot-idle:#777;--dot-good:#3c6;--dot-fair:#fb0;--dot-bad:#f44;
+  }
+  html[data-theme=light]{
+    --accent:#0f766e;--accent-fg:#fff;
+    --bg:#f2f2f4;--fg:#1c1c1e;--muted:#56565c;--faint:#6e6e76;
+    --sheet:#fff;--card:#e8e8ec;--card2:#dcdce2;--line:#d0d0d8;--grip:#c8c8d0;
+    --chip:#e4e4ea;--chip-fg:#3a3a40;
+    --scrim:rgba(0,0,0,.35);--pill:rgba(255,255,255,.95);
+    --ok:#0c7a43;--err:#c62828;
+    --handle-bg:rgba(15,118,110,.95);--handle-active:#0d5f57;
+    --bar-btn:rgba(250,250,252,.94);
+    --bar-grad:rgba(0,0,0,.25);
+    --shadow:rgba(0,0,0,.18);
+    --dot-idle:#aaa;--dot-good:#0c7a43;--dot-fair:#b45309;--dot-bad:#c62828;
+  }
+  html[data-theme=high]{
+    --accent:#ffe600;--accent-fg:#000;
+    --bg:#000;--fg:#fff;--muted:#fff;--faint:#e0e0e0;
+    --sheet:#000;--card:#0a0a0a;--card2:#1a1a1a;--line:#888;--grip:#888;
+    --chip:#111;--chip-fg:#fff;
+    --scrim:rgba(0,0,0,.7);--pill:rgba(0,0,0,.97);
+    --ok:#5f5;--err:#f55;
+    --handle-bg:#000;--handle-active:#222;
+    --bar-btn:rgba(0,0,0,.97);
+    --bar-grad:rgba(0,0,0,.7);
+    --shadow:rgba(0,0,0,.9);
+    --dot-idle:#888;--dot-good:#5f5;--dot-fair:#ffdd55;--dot-bad:#f55;
+  }
+  html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,sans-serif;
             overflow:hidden;touch-action:none;overscroll-behavior:none;-webkit-user-select:none;user-select:none;
             -webkit-touch-callout:none}
-  #app{position:fixed;top:var(--it);bottom:var(--ib);left:var(--il);right:var(--ir);background:#000;overflow:hidden}
+  #app{position:fixed;top:var(--it);bottom:var(--ib);left:var(--il);right:var(--ir);background:var(--bg);overflow:hidden}
   #screen{position:absolute;inset:0;overflow:hidden}
   #probe{position:fixed;visibility:hidden;pointer-events:none;
          padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px)
                  env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
 
   /* status pill: bottom center, above the toolbar, out of the menus' way */
-  #status{position:absolute;bottom:calc(var(--ib) + 76px);left:50%;transform:translateX(-50%);z-index:12;
-          background:rgba(16,16,16,.9);border-radius:16px;padding:6px 14px;font-size:12px;color:#9c9;
+  #status{position:absolute;bottom:calc(var(--ib) + var(--ikb,0px) + 76px);left:50%;transform:translateX(-50%);z-index:12;
+          background:var(--pill);border-radius:16px;padding:6px 14px;font-size:12px;color:var(--ok);
           max-width:80%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;
           transition:opacity .4s;opacity:0}
   #status.show{opacity:1}
-  #status.err{color:#f88}
+  #status.err{color:var(--err)}
 
   /* bottom toolbar: thumb-reachable, safe-area aware.
      The bar itself is click-through so only its buttons intercept touches;
      taps between/around buttons reach the remote desktop underneath. */
-  #bar{position:absolute;left:0;right:0;bottom:0;z-index:11;display:flex;justify-content:space-around;
+  #bar{position:absolute;left:0;right:0;bottom:var(--ikb,0px);z-index:11;display:flex;justify-content:space-around;
        padding:6px calc(var(--ir) + 6px) calc(var(--ib) + 6px) calc(var(--il) + 6px);
-       background:linear-gradient(transparent,rgba(0,0,0,.55) 30%);
+       background:linear-gradient(transparent,var(--bar-grad) 30%);
        pointer-events:none;transition:opacity .25s, transform .25s}
   #bar.hidden{opacity:0;transform:translateY(100%);pointer-events:none}
-  #bar button{pointer-events:auto;min-width:52px;min-height:48px;border:0;border-radius:12px;background:rgba(28,28,28,.92);
-              color:#ddd;font-size:11px;display:flex;flex-direction:column;align-items:center;justify-content:center;
-              gap:2px;padding:4px 8px;-webkit-tap-highlight-color:transparent}
-  #bar button:active{background:var(--accent);color:#fff}
+  #bar button{pointer-events:auto;min-width:44px;min-height:48px;border:0;border-radius:12px;background:var(--bar-btn);
+              color:var(--fg);font-size:11px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+              gap:2px;padding:4px 6px;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+  #bar button:active{background:var(--accent);color:var(--accent-fg)}
   #bar button svg{width:22px;height:22px;fill:currentColor}
-  #bar button.on{background:var(--accent);color:#fff}
+  #bar button.on{background:var(--accent);color:var(--accent-fg)}
+  #bar button.bar-hidden{display:none}
   /* grab handle shown while the toolbar is hidden; tap to reveal */
-  #barHandle{position:absolute;left:50%;bottom:calc(var(--ib) + 8px);z-index:11;
+  #barHandle{position:absolute;left:50%;bottom:calc(var(--ib) + var(--ikb,0px) + 8px);z-index:11;
              transform:translateX(-50%);display:flex;align-items:center;justify-content:center;gap:6px;
-             height:32px;padding:0 16px;border:1px solid rgba(255,255,255,.3);border-radius:16px;
-             background:rgba(42,102,102,.94);color:#fff;font-size:12px;font-weight:600;
-             letter-spacing:.02em;box-shadow:0 3px 14px rgba(0,0,0,.55);
-             pointer-events:auto;transition:opacity .2s,transform .2s}
+             height:32px;padding:0 16px;border:1px solid var(--grip);border-radius:16px;
+             background:var(--handle-bg);color:var(--accent-fg);font-size:12px;font-weight:600;
+             letter-spacing:.02em;box-shadow:0 3px 14px var(--shadow);
+             pointer-events:auto;transition:opacity .2s,transform .2s;touch-action:manipulation}
   #barHandle::before{content:'▲';font-size:10px;opacity:.95}
-  #barHandle:active{background:#3a8c8c;transform:translateX(-50%) scale(.96)}
+  #barHandle:active{background:var(--handle-active);transform:translateX(-50%) scale(.96)}
   #barHandle.hidden{opacity:0;pointer-events:none;transform:translateX(-50%) translateY(6px)}
+  /* connection quality dot (#50): green <300 ms, amber <1 s, red worse */
+  #netDot{width:8px;height:8px;border-radius:50%;background:var(--dot-idle);flex:0 0 auto}
+  #netDot.good{background:var(--dot-good)}#netDot.fair{background:var(--dot-fair)}
+  #netDot.poor,#netDot.down{background:var(--dot-bad)}
 
   /* menus drop from the TOP of the screen */
-  .backdrop{position:absolute;inset:0;z-index:20;background:rgba(0,0,0,.45);opacity:0;pointer-events:none;
+  .backdrop{position:absolute;inset:0;z-index:20;background:var(--scrim);opacity:0;pointer-events:none;
             transition:opacity .2s}
   .backdrop.show{opacity:1;pointer-events:auto}
   .sheet{position:absolute;left:0;right:0;top:0;z-index:21;max-height:78%;overflow-y:auto;
-         background:var(--sheet);border-radius:0 0 16px 16px;
+         background:var(--sheet);color:var(--fg);border-radius:0 0 16px 16px;
          padding:calc(var(--it) + 12px) 14px 20px calc(var(--il) + 14px);
          margin-right:var(--ir);transform:translateY(-105%);transition:transform .25s ease-out;touch-action:pan-y;
-         box-shadow:0 10px 36px rgba(0,0,0,.55)}
+         box-shadow:0 10px 36px var(--shadow)}
   .sheet.show{transform:translateY(0)}
   .sheet::before{content:'';position:sticky;top:0;display:block;margin:-4px auto 8px;width:44px;height:4px;
-                 border-radius:2px;background:#444}
-  .sheet h3{font-size:13px;color:#888;margin:8px 0 10px;text-transform:uppercase;letter-spacing:.08em}
+                 border-radius:2px;background:var(--grip)}
+  .sheet h3{font-size:13px;color:var(--muted);margin:8px 0 10px;text-transform:uppercase;letter-spacing:.08em}
   .sheet .row{display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;align-items:center}
   .sheet .row[hidden]{display:none}
   .sheet button,.sheet select,.sheet input[type=text]{flex:1 1 auto;min-height:44px;border:0;border-radius:10px;
-         background:#2a2a2a;color:#eee;padding:0 12px;font-size:14px;box-sizing:border-box}
-  .sheet button{background:#333}
-  .sheet button.primary{background:var(--accent);color:#fff}
+         background:var(--card);color:var(--fg);padding:0 12px;font-size:14px;box-sizing:border-box}
+  .sheet button{background:var(--card2)}
+  .sheet button.primary{background:var(--accent);color:var(--accent-fg)}
   .sheet button.step{flex:0 0 48px}
-  .sheet label{flex:1 1 100%;font-size:12px;color:#999;padding-top:4px}
-  .sheet .val{flex:0 0 56px;text-align:center;color:#9c9;font-size:13px}
+  .sheet label{flex:1 1 100%;font-size:12px;color:var(--muted);padding-top:4px}
+  .sheet .val{flex:0 0 56px;text-align:center;color:var(--ok);font-size:13px}
   .sheet input[type=range]{flex:1;width:100%;min-height:36px}
   .sheet input[type=checkbox]{width:20px;height:20px;min-height:0}
+  /* segmented control (input mode, viewport modes) */
+  .sheet .seg{display:flex;gap:4px;flex:1 1 100%}
+  .sheet .seg button{flex:1;min-height:40px;background:var(--card2);border-radius:10px;
+                     font-size:13px;padding:0 6px;color:var(--fg)}
+  .sheet .seg button.on{background:var(--accent);color:var(--accent-fg)}
   .sheet .check{flex:0 1 auto;min-height:44px;display:flex;align-items:center;gap:8px;font-size:14px;
-                background:#222;border-radius:10px;padding:0 12px}
-  .sheet hr{border:0;border-top:1px solid #262626;margin:10px 0}
+                background:var(--card);border-radius:10px;padding:0 12px}
+  .sheet hr{border:0;border-top:1px solid var(--line);margin:10px 0}
   .appgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;margin-bottom:10px}
-  .appgrid button{min-height:64px;display:flex;flex-direction:column;gap:3px;font-size:11.5px;background:#232323;
+  .appgrid button{min-height:64px;display:flex;flex-direction:column;gap:3px;font-size:11.5px;background:var(--card);
                   align-items:center;justify-content:center;text-align:center;
                   -webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
-  .appgrid button small{color:#777;font-size:9.5px;max-width:100%;overflow:hidden;text-overflow:ellipsis;
+  .appgrid button small{color:var(--faint);font-size:9.5px;max-width:100%;overflow:hidden;text-overflow:ellipsis;
                         display:block;white-space:nowrap;padding:0 4px}
   .appicon{width:32px;height:32px;object-fit:contain;flex:0 0 auto;position:absolute;inset:0}
   .tilewrap{width:32px;height:32px;position:relative;flex:0 0 auto}
@@ -93,53 +159,87 @@
   .chips{display:flex;gap:6px;overflow-x:auto;padding:2px 0 8px;touch-action:pan-x;-webkit-overflow-scrolling:touch;
          scrollbar-width:none}
   .chips::-webkit-scrollbar{display:none}
-  .chips button{flex:0 0 auto;min-height:32px;min-width:0;border:0;border-radius:16px;background:#262626;
-                color:#bbb;font-size:12px;padding:0 14px;-webkit-tap-highlight-color:transparent}
-  .chips button.on{background:var(--accent);color:#fff;font-weight:600}
-  .grphead{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.08em;margin:10px 0 6px;
+  .chips button{flex:0 0 auto;min-height:32px;min-width:0;border:0;border-radius:16px;background:var(--chip);
+                color:var(--chip-fg);font-size:12px;padding:0 14px;-webkit-tap-highlight-color:transparent}
+  .chips button.on{background:var(--accent);color:var(--accent-fg);font-weight:600}
+  .grphead{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.08em;margin:10px 0 6px;
            display:flex;align-items:center;gap:8px}
-  .grphead::after{content:'';flex:1;border-top:1px solid #262626}
+  .grphead::after{content:'';flex:1;border-top:1px solid var(--line)}
   .stats{display:flex;flex-direction:column;gap:8px;font-size:12px}
   .stat{display:flex;align-items:center;gap:8px}
-  .stat .lbl{flex:0 0 52px;color:#999}
-  .stat .bar{flex:1;height:8px;background:#262626;border-radius:4px;overflow:hidden}
+  .stat .lbl{flex:0 0 52px;color:var(--muted)}
+  .stat .bar{flex:1;height:8px;background:var(--line);border-radius:4px;overflow:hidden}
   .stat .bar i{display:block;height:100%;background:var(--accent)}
-  .stat .val{flex:0 0 84px;text-align:right;color:#ccc}
-  .frow{display:flex;align-items:center;gap:8px;padding:8px 4px;border-bottom:1px solid #262626}
+  .stat .val{flex:0 0 84px;text-align:right;color:var(--fg)}
+  .frow{display:flex;align-items:center;gap:8px;padding:8px 4px;border-bottom:1px solid var(--line)}
   .frow .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
-  .frow .sz{flex:0 0 auto;color:#777;font-size:11px}
+  .frow .sz{flex:0 0 auto;color:var(--faint);font-size:11px}
   .frow button{flex:0 0 auto;min-height:36px;min-width:0;padding:0 10px;font-size:11px}
   .pinhead .grphead{color:var(--accent)}
-  .strow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #232323}
+  .strow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
   .strow .nm{flex:1;min-width:0}
   .strow .nm b{display:block;font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .strow .nm small{display:block;color:#888;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .strow button{flex:0 0 auto;min-height:40px;min-width:86px;border:0;border-radius:10px;background:#333;
-                color:#eee;font-size:13px;padding:0 12px;-webkit-tap-highlight-color:transparent}
-  .strow button.primary{background:var(--accent);color:#fff}
+  .strow .nm small{display:block;color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .strow button{flex:0 0 auto;min-height:40px;min-width:86px;border:0;border-radius:10px;background:var(--card2);
+                color:var(--fg);font-size:13px;padding:0 12px;-webkit-tap-highlight-color:transparent}
+  .strow button.primary{background:var(--accent);color:var(--accent-fg)}
   .strow button:disabled{opacity:.55}
   #storeList{max-height:46vh;overflow-y:auto;touch-action:pan-y;margin-top:4px}
-  .cliprow{display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid #232323}
+  .cliprow{display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--line)}
   .cliprow .cv{flex:1;min-width:0;cursor:pointer}
   .cliprow .cv b{display:block;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;
                  text-overflow:ellipsis;max-height:2.6em;white-space:pre-wrap}
-  .cliprow .cv small{display:block;color:#777;font-size:10.5px;margin-top:2px}
-  .cliprow button{flex:0 0 auto;min-height:36px;min-width:36px;border:0;border-radius:8px;background:#333;
-                  color:#eee;font-size:12px;padding:0 8px;-webkit-tap-highlight-color:transparent}
-  .cliprow button.del{background:#422;color:#f99}
+  .cliprow .cv small{display:block;color:var(--faint);font-size:10.5px;margin-top:2px}
+  .cliprow button{flex:0 0 auto;min-height:36px;min-width:36px;border:0;border-radius:8px;background:var(--card2);
+                  color:var(--fg);font-size:12px;padding:0 8px;-webkit-tap-highlight-color:transparent}
+  .cliprow button.del{background:#422;color:var(--err)}
   #clipList{max-height:34vh;overflow-y:auto;touch-action:pan-y;margin-top:4px}
-  #info{font-size:10.5px;color:#666;margin-top:6px;line-height:1.5}
+  #info{font-size:10.5px;color:var(--faint);margin-top:6px;line-height:1.5}
 
   /* connect overlay */
-  #overlay{position:absolute;inset:0;z-index:30;background:#000;display:flex;align-items:center;justify-content:center;
+  #overlay{position:absolute;inset:0;z-index:30;background:var(--bg);display:flex;align-items:center;justify-content:center;
            flex-direction:column;gap:18px}
   #overlay.hide{display:none}
-  #overlay .logo{font-size:20px;color:#9c9;letter-spacing:.12em}
+  #overlay .logo{font-size:20px;color:var(--ok);letter-spacing:.12em}
   #overlay button{min-width:200px;min-height:52px;border:0;border-radius:14px;background:var(--accent);
-                  color:#fff;font-size:16px}
-  .spin{width:28px;height:28px;border:3px solid #333;border-top-color:var(--accent);border-radius:50%;
+                  color:var(--accent-fg);font-size:16px}
+  .spin{width:28px;height:28px;border:3px solid var(--card2);border-top-color:var(--accent);border-radius:50%;
         animation:sp 1s linear infinite}
   @keyframes sp{to{transform:rotate(360deg)}}
+
+  /* transient action overlay / undo toast (#44 #68) */
+  #toast{position:absolute;left:50%;bottom:calc(var(--ib) + var(--ikb,0px) + 88px);transform:translateX(-50%);
+         z-index:40;display:flex;align-items:center;gap:10px;background:var(--pill);
+         border:1px solid var(--line);border-radius:14px;padding:8px 14px;font-size:13px;
+         color:var(--fg);box-shadow:0 4px 18px var(--shadow);transition:opacity .25s}
+  #toast[hidden]{display:none}
+  #toast button{min-height:36px;border:0;border-radius:9px;background:var(--accent);color:var(--accent-fg);
+                font-size:12px;padding:0 12px;font-weight:600}
+
+  /* first-run tour (#56): three dismissible cards */
+  #tour{position:absolute;inset:0;z-index:50;background:var(--scrim);display:flex;
+        align-items:center;justify-content:center;padding:20px}
+  #tour[hidden]{display:none}
+  .tourCard{background:var(--sheet);color:var(--fg);border-radius:16px;padding:20px;max-width:420px;
+            width:100%;box-shadow:0 10px 36px var(--shadow)}
+  .tourCard p{font-size:14px;line-height:1.5;margin:6px 0 14px;color:var(--fg)}
+  .tourDots{display:flex;gap:6px;justify-content:center;margin-bottom:14px}
+  .tourDots i{width:8px;height:8px;border-radius:50%;background:var(--line)}
+  .tourDots i.on{background:var(--accent)}
+
+  /* accessibility (#53): visible focus for keyboard and switch users */
+  :focus{outline:none}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  /* prefers-reduced-motion: drop the sheet/toolbar animations (#53) */
+  @media (prefers-reduced-motion: reduce){
+    .sheet,.backdrop,#bar,#barHandle,#status,#toast{transition:none!important}
+    .touchRipple{animation:none!important;opacity:0}
+  }
+  /* tablet landscape (#52): sheets become centered side panels */
+  @media (orientation: landscape) and (min-width: 640px){
+    .sheet{max-width:560px;left:50%;right:auto;margin-right:0;transform:translate(-50%,-105%)}
+    .sheet.show{transform:translate(-50%,0)}
+  }
 </style>
 </head>
 <body>
@@ -148,41 +248,44 @@
   <div id="screen"></div>
   <div id="status"></div>
 
-  <button id="barHandle" class="hidden" type="button" title="Show controls">Controls</button>
+  <button id="barHandle" class="hidden" type="button" title="Show controls" aria-label="Show controls">
+    <span id="netDot" aria-hidden="true"></span><span data-i18n="bar.controls">Controls</span>
+  </button>
   <div id="bar">
-    <button id="bApps"><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg>Apps</button>
-    <button id="bStore"><svg viewBox="0 0 24 24"><path d="M7 18a2 2 0 100 4 2 2 0 000-4zm10 0a2 2 0 100 4 2 2 0 000-4zM7.2 14h9.6c.75 0 1.4-.4 1.7-1.1l3.3-6.9-1.8-.9L16.8 12H7.3L4.3 4H1v2h2l3.6 7.6-1.4 2.5C4.5 17.4 5.5 19 7 19h12v-2H7.2l1-2z"/></svg>Store</button>
-    <button id="bKeys"><svg viewBox="0 0 24 24"><path d="M2 6v12h20V6H2zm18 10h-6v-2h6v2zM4 8h3v2H4V8zm4 0h3v2H8V8zm4 0h3v2h-3V8zm4 0h3v2h-3V8zM4 12h3v2H4v-2zm4 0h11v2H8v-2z"/></svg>Keys</button>
-    <button id="bAudio"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0014 8v8a4.5 4.5 0 002.5 4 4.5 4.5 0 000-8z"/></svg>Audio</button>
-    <button id="bFiles"><svg viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>Files</button>
-    <button id="bFull"><svg viewBox="0 0 24 24"><path d="M4 4h6v2H6v4H4V4zm10 0h6v6h-2V6h-4V4zM4 14h2v4h4v2H4v-6zm14 0h2v6h-6v-2h4v-6z"/></svg>Full</button>
-    <button id="bMore"><svg viewBox="0 0 24 24"><path d="M12 8a2 2 0 100-4 2 2 0 000 4zm0 6a2 2 0 100-4 2 2 0 000 4zm0 6a2 2 0 100-4 2 2 0 000 4z"/></svg>More</button>
+    <button id="bApps" aria-label="Apps"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg><span data-i18n="bar.apps">Apps</span></button>
+    <button id="bStore" aria-label="App store"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18a2 2 0 100 4 2 2 0 000-4zm10 0a2 2 0 100 4 2 2 0 000-4zM7.2 14h9.6c.75 0 1.4-.4 1.7-1.1l3.3-6.9-1.8-.9L16.8 12H7.3L4.3 4H1v2h2l3.6 7.6-1.4 2.5C4.5 17.4 5.5 19 7 19h12v-2H7.2l1-2z"/></svg><span data-i18n="bar.store">Store</span></button>
+    <button id="bKeys" aria-label="Keyboard"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 6v12h20V6H2zm18 10h-6v-2h6v2zM4 8h3v2H4V8zm4 0h3v2H8V8zm4 0h3v2h-3V8zm4 0h3v2h-3V8zM4 12h3v2H4v-2zm4 0h11v2H8v-2z"/></svg><span data-i18n="bar.keys">Keys</span></button>
+    <button id="bTouch" aria-pressed="false" data-i18n-aria="bar.touch" aria-label="Touch"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11.2V6a1.8 1.8 0 013.6 0v5l1.3.3 4.4 1.5a2 2 0 011.3 2.3l-.8 3.7a2 2 0 01-2 1.6h-5.1a2 2 0 01-1.4-.6L6 15.4a1.6 1.6 0 012.2-2.3l.8.6V11.2z"/></svg><span data-i18n="bar.touch">Touch</span></button>
+    <button id="bAudio" aria-label="Audio"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0014 8v8a4.5 4.5 0 002.5 4 4.5 4.5 0 000-8z"/></svg><span data-i18n="bar.audio">Audio</span></button>
+    <button id="bFiles" aria-label="Files"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg><span data-i18n="bar.files">Files</span></button>
+    <button id="bFull" aria-label="Fullscreen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v2H6v4H4V4zm10 0h6v6h-2V6h-4V4zM4 14h2v4h4v2H4v-6zm14 0h2v6h-6v-2h4v-6z"/></svg><span data-i18n="bar.full">Full</span></button>
+    <button id="bMore" aria-label="More settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8a2 2 0 100-4 2 2 0 000 4zm0 6a2 2 0 100-4 2 2 0 000 4zm0 6a2 2 0 100-4 2 2 0 000 4z"/></svg><span data-i18n="bar.more">More</span></button>
   </div>
 
   <div class="backdrop" id="backdrop"></div>
 
-  <div class="sheet" id="shApps">
-    <h3>Apps</h3>
+  <div class="sheet" id="shApps" role="dialog" aria-modal="true" aria-label="Apps">
+    <h3 data-i18n="sheet.apps">Apps</h3>
     <div class="row">
-      <input type="text" id="appSearch" placeholder="Filter apps…" enterkeyhint="search">
+      <input type="text" id="appSearch" placeholder="Filter apps…" data-i18n-ph="apps.filterPh" enterkeyhint="search" aria-label="Filter apps">
     </div>
     <div class="chips" id="appChips"></div>
     <div id="appBody"></div>
-    <div class="row"><button class="primary" id="fitBtn">Fit windows to screen</button></div>
+    <div class="row"><button class="primary" id="fitBtn" data-i18n="apps.fit">Fit windows to screen</button></div>
   </div>
 
-  <div class="sheet" id="shStore">
-    <h3>App store</h3>
+  <div class="sheet" id="shStore" role="dialog" aria-modal="true" aria-label="App store">
+    <h3 data-i18n="sheet.store">App store</h3>
     <div class="row">
-      <input type="text" id="storeQ" placeholder="Search apps / packages…" enterkeyhint="search">
-      <button id="storeGo" class="primary" style="flex:0 0 90px">Search</button>
+      <input type="text" id="storeQ" placeholder="Search apps / packages…" data-i18n-ph="store.searchPh" enterkeyhint="search" aria-label="Search the app store">
+      <button id="storeGo" class="primary" style="flex:0 0 90px" data-i18n="btn.search">Search</button>
     </div>
     <div id="storeList"><div class="strow"><div class="nm"><small>Type to search the app catalog…</small></div></div></div>
   </div>
 
-  <div class="sheet" id="shAudio">
-    <h3>Audio</h3>
-    <div class="row"><button class="primary" id="audioStart">Start</button><button id="audioStop">Stop</button></div>
+  <div class="sheet" id="shAudio" role="dialog" aria-modal="true" aria-label="Audio">
+    <h3 data-i18n="sheet.audio">Audio</h3>
+    <div class="row"><button class="primary" id="audioStart" data-i18n="audio.start">Start</button><button id="audioStop" data-i18n="audio.stop">Stop</button></div>
     <div class="row">
       <label>Codec</label>
       <select id="audioCodec">
@@ -191,7 +294,7 @@
       </select>
     </div>
     <div class="row"><label>Volume</label><input type="range" id="audioVol" min="0" max="1" step="0.05" value="0.9"></div>
-    <div class="row"><button id="audioTest">Play test tone</button></div>
+    <div class="row"><button id="audioTest" data-i18n="audio.test">Play test tone</button></div>
     <hr>
     <h3>Devices in — desktop browser only</h3>
     <div class="row" id="devRow" hidden>
@@ -201,10 +304,10 @@
     <div class="row"><label id="devNote">Share this computer's microphone and webcam into the desktop. Hidden on phones and tablets.</label></div>
   </div>
 
-  <div class="sheet" id="shFiles">
-    <h3>Files — ~/Downloads</h3>
+  <div class="sheet" id="shFiles" role="dialog" aria-modal="true" aria-label="Files">
+    <h3><span data-i18n="sheet.files">Files</span> — ~/Downloads</h3>
     <div class="row">
-      <button class="primary" id="upBtn">⬆ Upload from phone</button>
+      <button class="primary" id="upBtn" data-i18n="files.upload">⬆ Upload from phone</button>
       <input type="file" id="upInput" multiple style="display:none">
     </div>
     <div class="row" id="upProgRow" style="display:none">
@@ -216,13 +319,56 @@
     <div id="fileList"><small style="color:#777">Loading…</small></div>
   </div>
 
-  <div class="sheet" id="shMore">
-    <h3>System</h3>
+  <div class="sheet" id="shMore" role="dialog" aria-modal="true" aria-label="More settings">
+    <h3 data-i18n="sheet.system">System</h3>
     <div id="statsBox" class="stats"><small style="color:#777">Loading stats…</small></div>
     <hr>
-    <h3>Display</h3>
+    <h3 data-i18n="more.display">Display</h3>
     <div class="row">
-      <button id="matchBtn" class="primary">Match desktop to screen</button>
+      <button id="matchBtn" class="primary" data-i18n="more.match">Match desktop to screen</button>
+    </div>
+    <div class="row">
+      <div class="seg" id="vpSeg" role="group" aria-label="Viewport mode">
+        <button type="button" data-mode="fit" class="on">Fit</button>
+        <button type="button" data-mode="fill">Fill</button>
+        <button type="button" data-mode="one">1:1</button>
+        <button type="button" data-mode="remote">Remote</button>
+      </div>
+    </div>
+    <div class="row">
+      <button id="vpReset" data-i18n="more.resetZoom">Reset zoom</button>
+      <span class="val" id="zoomVal">100%</span>
+    </div>
+    <div class="row"><label id="vpScale"></label></div>
+    <hr>
+    <h3 data-i18n="more.appearance">Appearance</h3>
+    <div class="row">
+      <label data-i18n="more.theme">Theme</label>
+      <select id="themeSel" aria-label="Theme">
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+        <option value="high">High contrast</option>
+        <option value="auto">Auto</option>
+      </select>
+    </div>
+    <div class="row">
+      <label data-i18n="more.language">Language</label>
+      <select id="langSel" aria-label="Language">
+        <option value="en">English</option>
+        <option value="de">Deutsch</option>
+        <option value="es">Español</option>
+        <option value="fr">Français</option>
+      </select>
+    </div>
+    <hr>
+    <h3 data-i18n="more.connection">Connection</h3>
+    <div class="stats" id="connBox">
+      <div class="stat"><span class="lbl">RTT</span><span class="val" id="connRtt" style="flex:1;text-align:left">—</span></div>
+      <div class="stat"><span class="lbl">Reconnects</span><span class="val" id="connReconnects" style="flex:1;text-align:left">0</span></div>
+      <div class="stat"><span class="lbl">Viewport</span><span class="val" id="connViewport" style="flex:1;text-align:left">—</span></div>
+      <div class="stat"><span class="lbl">Server</span><span class="val" id="connVersion" style="flex:1;text-align:left">—</span></div>
+      <div class="stat"><span class="lbl">Last drop</span><span class="val" id="connReason" style="flex:1;text-align:left">—</span></div>
+      <div class="stat"><span class="lbl">Browser</span><span class="val" id="connUA" style="flex:1;text-align:left;word-break:break-all;white-space:normal;font-size:10.5px"></span></div>
     </div>
     <div class="row">
       <label>Desktop width (text size)</label>
@@ -235,19 +381,29 @@
       </select>
     </div>
     <div class="row">
-      <label>Stream quality</label>
+      <label data-i18n="more.quality">Stream quality</label>
       <input type="range" id="quality" min="0" max="9" step="1" value="6">
       <span class="val" id="qualityVal">6</span>
     </div>
     <div class="row">
-      <label>Keep screen awake</label>
+      <label data-i18n="more.keepAwake">Keep screen awake</label>
       <div class="check"><input type="checkbox" id="wake" checked></div>
     </div>
     <hr>
-    <h3>Screen edges</h3>
+    <h3 data-i18n="more.orientation">Orientation</h3>
+    <div class="row">
+      <button id="orientBtn" aria-pressed="false">Lock landscape</button>
+    </div>
+    <div class="row"><label id="orientStatus"></label></div>
+    <hr>
+    <h3 data-i18n="more.toolbar">Toolbar</h3>
+    <div id="barCust"></div>
+    <div class="row"><button id="barReset" data-i18n="more.resetToolbar">Reset toolbar</button></div>
+    <hr>
+    <h3 data-i18n="more.edges">Screen edges</h3>
     <div class="row">
       <label>Reserved edge for system nav bar (px · auto = none unless the OS overlays)</label>
-      <button class="step" id="navMinus">−</button><span class="val" id="navVal">auto</span><button class="step" id="navPlus">+</button>
+      <button class="step" id="navMinus" aria-label="Less edge reserve">−</button><span class="val" id="navVal">auto</span><button class="step" id="navPlus" aria-label="More edge reserve">+</button>
     </div>
     <div class="row">
       <label>Nav bar side in landscape</label>
@@ -257,29 +413,48 @@
     </div>
     <div class="row"><button id="autoCrop">Re-detect screen edges</button></div>
     <hr>
-    <h3>Clipboard history</h3>
+    <h3 data-i18n="more.clipboard">Clipboard history</h3>
     <div class="row">
-      <button id="copyFromBtn" class="primary">Desktop → Phone</button>
-      <button id="pasteToBtn">Phone → Desktop</button>
+      <button id="copyFromBtn" class="primary" data-i18n="more.copyFrom">Desktop → Phone</button>
+      <button id="pasteToBtn" data-i18n="more.pasteTo">Phone → Desktop</button>
     </div>
-    <div class="row"><button id="typeBtn">Type clipboard as keystrokes</button></div>
+    <div class="row"><button id="typeBtn" data-i18n="more.typeClip">Type clipboard as keystrokes</button></div>
     <div id="clipList"></div>
-    <div class="row"><button id="clipRefresh">Refresh</button><button id="clipClear">Clear history</button></div>
+    <div class="row"><button id="clipRefresh" data-i18n="btn.refresh">Refresh</button><button id="clipClear" data-i18n="more.clearHist">Clear history</button></div>
     <hr>
-    <h3>Session</h3>
+    <h3 data-i18n="more.session">Session</h3>
     <div class="row">
-      <button id="reconnectBtn">Reconnect</button>
-      <button id="clipboardBtn">Paste to remote</button>
+      <button id="reconnectBtn" data-i18n="btn.reconnect">Reconnect</button>
+      <button id="clipboardBtn" data-i18n="more.pasteRemote">Paste to remote</button>
     </div>
-    <div class="row"><button id="logoutBtn">Log out</button></div>
+    <div class="row"><button id="installBtn" hidden data-i18n="btn.install">Install app on this device</button></div>
+    <div class="row"><button id="tourReplay" data-i18n="more.tour">Replay intro tour</button></div>
+    <div class="row"><button id="logoutBtn" data-i18n="btn.logout">Log out</button></div>
     <div id="info"></div>
   </div>
 
   <div id="overlay">
     <div class="logo">REMOTE DESKTOP</div>
     <div class="spin" id="ovSpin"></div>
-    <button id="ovBtn" style="display:none">Reconnect</button>
+    <button id="ovBtn" style="display:none" data-i18n="btn.reconnect">Reconnect</button>
     <div id="ovText" style="font-size:12px;color:#777">Connecting…</div>
+  </div>
+
+  <div id="toast" hidden role="status">
+    <span id="toastMsg"></span>
+    <button id="toastUndo" hidden>Undo</button>
+  </div>
+
+  <div id="tour" hidden>
+    <div class="tourCard" role="dialog" aria-modal="true" aria-labelledby="tourTitle">
+      <h3 id="tourTitle" style="margin-top:0"></h3>
+      <p id="tourBody"></p>
+      <div class="tourDots" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div class="row" style="margin-bottom:0">
+        <button id="tourSkip" data-i18n="btn.skip">Skip</button>
+        <button id="tourNext" class="primary" data-i18n="btn.next">Next</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -309,6 +484,85 @@ function status(t, err){
   statusTimer = setTimeout(() => statusEl.classList.remove('show'), 4000);
   $('ovText').textContent = t;
 }
+
+/* ------------------------------------------------------------------ *
+ *  Localization (#54): shell strings live in web/locales/*.json.      *
+ *  Missing keys fall back to English; switching applies instantly.    *
+ * ------------------------------------------------------------------ */
+const LOCALES = ['en', 'de', 'es', 'fr'];
+let i18nDict = {}, i18nLang = 'en';
+function i18nT(key, fallback){
+  const v = i18nDict[key];
+  if (typeof v === 'string' && v) return v;
+  return fallback ?? key;      // English fallback everywhere
+}
+function i18nApply(){
+  document.querySelectorAll('[data-i18n]').forEach(el =>
+    el.textContent = i18nT(el.dataset.i18n, el.textContent));
+  document.querySelectorAll('[data-i18n-ph]').forEach(el =>
+    el.placeholder = i18nT(el.dataset.i18nPh, el.placeholder));
+  document.querySelectorAll('[data-i18n-aria]').forEach(el =>
+    el.setAttribute('aria-label', i18nT(el.dataset.i18nAria, el.getAttribute('aria-label'))));
+}
+async function i18nLoad(lang){
+  if (!LOCALES.includes(lang)) lang = 'en';
+  try {
+    const r = await fetch('/locales/' + lang + '.json', { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    i18nDict = await r.json();
+    i18nLang = lang;
+  } catch (_) {
+    i18nDict = {};
+    i18nLang = 'en';
+  }
+  i18nApply();
+  // touch.js builds labelled controls; rebuild them in the new language
+  if (window.__touch && window.__touch.rebuild) try { window.__touch.rebuild(); } catch (_) {}
+}
+function detectLang(){
+  const pref = store.get('lang', null);
+  if (pref && LOCALES.includes(pref)) return pref;
+  const nav = (navigator.language || 'en').slice(0, 2).toLowerCase();
+  return LOCALES.includes(nav) ? nav : 'en';
+}
+$('langSel').value = detectLang();
+$('langSel').addEventListener('change', e => {
+  store.set('lang', e.target.value);
+  i18nLoad(e.target.value);
+});
+i18nLoad(detectLang());
+
+/* Transient action overlay: names the gesture that fired (#44) and carries
+   an optional undo button for destructive taps (#68). */
+let toastTimer = null, toastUndo = null;
+function toast(msg, action){
+  const el = $('toast');
+  if (!el) return;
+  $('toastMsg').textContent = msg;
+  const undo = $('toastUndo');
+  toastUndo = action && action.fn ? action : null;
+  undo.hidden = !toastUndo;
+  el.hidden = false;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.classList.remove('show'); setTimeout(() => { el.hidden = true; }, 250); }, 3500);
+}
+$('toastUndo').addEventListener('click', () => {
+  const u = toastUndo;
+  toastUndo = null;
+  $('toast').classList.remove('show');
+  $('toast').hidden = true;
+  if (u && u.fn) try { u.fn(); } catch (_) {}
+});
+
+/* iOS Safari (#57): Safari fires non-standard gesturestart/gesturechange
+   for two-finger pinch and zooms the PAGE unless prevented. The app owns
+   pinch (touch.js), so page-level gestures are always rejected. Rubber-
+   banding and double-tap zoom are covered by touch-action /
+   overscroll-behavior in the stylesheet and by the canvas touch-action:
+   none set in touch.js. */
+['gesturestart', 'gesturechange', 'gestureend'].forEach(ev =>
+  document.addEventListener(ev, e => e.preventDefault(), { passive: false }));
 
 /* ------------------------------------------------------------------ *
  *  Insets: keep the desktop out from under the Android nav bar        *
@@ -365,10 +619,32 @@ function applyInsets(){
   root.style.setProperty('--ib', ins.b + 'px');
   root.style.setProperty('--il', ins.l + 'px');
   root.style.setProperty('--ir', ins.r + 'px');
+  updateKbInset();
   $('navVal').textContent = store.get('nav', null) !== null ? store.get('nav') : 'auto';
   const r = appEl.getBoundingClientRect();
   $('info').textContent = `${how} · view ${Math.round(r.width)}×${Math.round(r.height)} · window ${innerWidth}×${innerHeight}`;
 }
+
+/* Keyboard inset (#58): visualViewport.height shrinks when the on-screen
+   keyboard opens. The canvas keeps the layout viewport on purpose —
+   resizing it would re-scale the remote desktop and offset the pointer
+   mapping — while the shell chrome (toolbar, handle, status, toast and
+   the extra-keys bar) lifts above the keyboard via --ikb. */
+function updateKbInset(){
+  let kb = 0;
+  if (window.visualViewport) {
+    kb = Math.max(0, Math.round(innerHeight - visualViewport.height));
+    if (kb < 120) kb = 0;   // ignore URL-bar collapse and rubber-banding
+  }
+  root.style.setProperty('--ikb', kb + 'px');
+}
+if (window.visualViewport) {
+  visualViewport.addEventListener('resize', updateKbInset);
+  visualViewport.addEventListener('scroll', updateKbInset);
+}
+['focusin', 'focusout'].forEach(ev =>
+  document.addEventListener(ev, () => { setTimeout(updateKbInset, 350); setTimeout(updateKbInset, 900); }));
+addEventListener('orientationchange', () => setTimeout(updateKbInset, 300));
 
 /* ------------------------------------------------------------------ *
  *  Remote desktop size: same proportions as the visible area          *
@@ -386,6 +662,9 @@ function targetSize(){
 let lastApiSize = '';
 async function matchDesktop(force){
   if (!rfb) return;
+  // Only remote-resize mode may change the desktop size (#43); local fit /
+  // fill / 1:1 modes are purely client-side scaling.
+  if (store.get('vpMode', 'fit') !== 'remote') return;
   const t = targetSize();
   if (rfb._supportsSetDesktopSize) {
     rfb._requestRemoteResize();
@@ -406,7 +685,49 @@ async function matchDesktop(force){
 function relayout(){
   applyInsets();
   if (rfb) { clearTimeout(relayout.t); relayout.t = setTimeout(() => matchDesktop(false), 400); }
+  updateVpInfo();
 }
+
+/* ------------------------------------------------------------------ *
+ *  Viewport modes (#43): fit / fill / 1:1 / remote-resize             *
+ * ------------------------------------------------------------------ */
+function vpMode(){ return store.get('vpMode', 'fit'); }
+function paintVpSeg(){
+  document.querySelectorAll('#vpSeg button').forEach(b => {
+    const on = b.dataset.mode === vpMode();
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+}
+function updateVpInfo(){
+  const z = (window.__touch && window.__touch.getZoom) ? window.__touch.getZoom() : 1;
+  if ($('zoomVal')) $('zoomVal').textContent = Math.round(z * 100) + '%';
+  try {
+    const d = rfb._display, fbw = d._fbWidth, fbh = d._fbHeight;
+    const r = rfb._canvas.getBoundingClientRect();
+    const eff = r.width / Math.max(1, fbw);
+    const stretched = Math.abs((r.width / Math.max(1, r.height)) - (fbw / Math.max(1, fbh))) > 0.02;
+    $('vpScale').textContent = `fb ${fbw}×${fbh} · on-screen ${Math.round(eff * 100)}% · ` +
+      (stretched ? 'stretched' : 'aspect preserved') + ` · ${vpMode()}`;
+  } catch (_) { if ($('vpScale')) $('vpScale').textContent = ''; }
+}
+function applyVpMode(){
+  paintVpSeg();
+  if (!rfb) return;
+  const m = vpMode();
+  rfb.scaleViewport = m !== 'one';       // 1:1 shows native pixels unscaled
+  rfb.clipViewport = m === 'one';
+  rfb.resizeSession = m === 'remote';    // only remote-resize may change the desktop
+  if (window.__touch && window.__touch.setVpMode) window.__touch.setVpMode(m);
+  updateVpInfo();
+  if (m === 'remote') matchDesktop(true);
+}
+document.querySelectorAll('#vpSeg button').forEach(b =>
+  b.addEventListener('click', () => { store.set('vpMode', b.dataset.mode); applyVpMode(); }));
+$('vpReset').addEventListener('click', () => {
+  if (window.__touch && window.__touch.resetZoom) window.__touch.resetZoom();
+  updateVpInfo();
+});
 
 /* ------------------------------------------------------------------ *
  *  Connect with automatic reconnect (no page reload)                  *
@@ -433,9 +754,7 @@ function connect(){
 
   rfb = new RFB(screenEl, wsUrl, { credentials: { password: wsPassword } });
   window.rfb = rfb;
-  rfb.scaleViewport = true;
-  rfb.clipViewport = false;
-  rfb.resizeSession = true;
+  applyVpMode();                    // scaleViewport / clipViewport / resizeSession per mode (#43)
   rfb.qualityLevel = parseInt(store.get('quality', '6'), 10);
 
   // custom resize: keep the remote desktop the same proportions as the visible area
@@ -451,15 +770,27 @@ function connect(){
     reconnectDelay = 1000;
     $('overlay').classList.add('hide');
     status('Connected');
+    setQuality('');                      // unknown until the first ping
+    startPing();                         // quality monitor every 5 s (#50)
     if (touchReady && window.__touch?.setRfb) window.__touch.setRfb(rfb);  // re-bind touch layer
     else initTouchOnce();
-    setTimeout(() => matchDesktop(true), 1200);
+    applyVpMode();
+    paintTouchBtn();
+    // re-apply once the first framebuffer has laid out (fill-mode base zoom,
+    // remote-resize request) and again for slow links
+    setTimeout(applyVpMode, 1200);
+    setTimeout(applyVpMode, 2600);
     requestWakeLock();
   });
   rfb.addEventListener('disconnect', e => {
     connected = false;
     releaseWakeLock();
-    if (e.detail.clean || userDisconnected) {
+    stopPing();
+    const clean = e.detail.clean || userDisconnected;
+    if (!clean) reconnectCount++;          // count only auto-reconnects (#50)
+    lastDropReason = (e.detail && e.detail.reason) ? String(e.detail.reason)
+      : (clean ? 'clean' : 'unknown');
+    if (clean) {
       status('Disconnected');
       $('overlay').classList.remove('hide');
       $('ovSpin').style.display = 'none';
@@ -472,7 +803,7 @@ function connect(){
   });
   rfb.addEventListener('credentialsrequired', () =>
     rfb.sendCredentials({ password: prompt('Password required:') }));
-  rfb.addEventListener('desktopname', e => { document.title = 'Remote – ' + e.detail.name; });
+  rfb.addEventListener('desktopname', e => { document.title = 'Remote – ' + e.detail.name; updateVpInfo(); });
   rfb.addEventListener('clipboard', e => {
     if (e.detail.text) { try { navigator.clipboard.writeText(e.detail.text).catch(() => {}); } catch(_) {} }
   });
@@ -492,10 +823,26 @@ function initTouchOnce(){
       rfb, screenEl, appEl, status, $,
       menu: $('shMore'),           // touch settings get appended to the More sheet
       keyboardButton: $('bKeys'),  // toolbar button toggles the mobile keyboard
+      t: i18nT,                    // localized labels for touch settings (#54)
+      vpInfo: updateVpInfo,        // keep the zoom indicator live (#42)
+      onModeChange: paintTouchBtn, // sync the toolbar toggle (#41)
+      actionToast: toast,          // transient gesture overlay (#44)
     });
     touchReady = true;
   } catch (e) { console.warn('touch init failed', e); }
 }
+
+/* ------------------------------------------------------------------ *
+ *  Direct-touch toolbar toggle (#41)                                  *
+ * ------------------------------------------------------------------ */
+function paintTouchBtn(){
+  const direct = !!(window.__touch && window.__touch.settings && window.__touch.settings.mode === 'direct');
+  $('bTouch').classList.toggle('on', direct);
+  $('bTouch').setAttribute('aria-pressed', direct ? 'true' : 'false');
+}
+$('bTouch').addEventListener('click', () => {
+  if (window.__touch && window.__touch.toggleMode) window.__touch.toggleMode();
+});
 
 /* ------------------------------------------------------------------ *
  *  Wake lock: keep the phone screen on while connected                *
@@ -517,22 +864,158 @@ document.addEventListener('visibilitychange', () => {
 });
 
 /* ------------------------------------------------------------------ *
+ *  Connection quality + reconnect diagnostics (#50)                   *
+ * ------------------------------------------------------------------ */
+let rttMs = null, reconnectCount = 0, lastDropReason = '—', serverVersion = '—', pingTimer = null;
+function setQuality(cls){
+  const dot = $('netDot');
+  if (!dot) return;
+  dot.className = cls;   // good | fair | poor | down | '' (unknown)
+}
+async function pingHealth(){
+  if (!connected || document.hidden) return;
+  const t0 = performance.now();
+  try {
+    const r = await fetch('/api/health?ping=' + Date.now(), { cache: 'no-store' });
+    if (r.status === 401) { location.href = '/login'; return; }
+    rttMs = Math.round(performance.now() - t0);
+    try { serverVersion = (await r.json()).version || serverVersion; } catch (_) {}
+    setQuality(rttMs < 300 ? 'good' : rttMs < 1000 ? 'fair' : 'poor');
+  } catch (_) {
+    rttMs = null;
+    setQuality('down');
+  }
+  updateConnBox();
+}
+function updateConnBox(){
+  if (!$('connRtt')) return;
+  $('connRtt').textContent = rttMs === null ? (connected ? 'measuring…' : 'disconnected') : rttMs + ' ms';
+  $('connReconnects').textContent = String(reconnectCount);
+  const r = appEl.getBoundingClientRect();
+  $('connViewport').textContent = `${Math.round(r.width)}×${Math.round(r.height)}` +
+    (innerWidth > innerHeight ? ' (landscape)' : ' (portrait)');
+  $('connVersion').textContent = serverVersion;
+  $('connReason').textContent = lastDropReason;
+  $('connUA').textContent = navigator.userAgent;
+}
+function startPing(){ clearInterval(pingTimer); pingHealth(); pingTimer = setInterval(pingHealth, 5000); }
+function stopPing(){ clearInterval(pingTimer); pingTimer = null; setQuality('down'); }
+
+/* ------------------------------------------------------------------ *
+ *  Themes (#51): dark (default), light, high-contrast, auto           *
+ * ------------------------------------------------------------------ */
+const themeMQ = matchMedia('(prefers-color-scheme: light)');
+function resolveTheme(){
+  const pref = store.get('theme', 'dark');
+  if (pref === 'auto') return themeMQ.matches ? 'light' : 'dark';
+  return ['dark', 'light', 'high'].includes(pref) ? pref : 'dark';
+}
+function applyTheme(){
+  const t = resolveTheme();
+  root.setAttribute('data-theme', t);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = t === 'light' ? '#f2f2f4' : '#161616';
+  $('themeSel').value = store.get('theme', 'dark');
+}
+themeMQ.addEventListener?.('change', () => {
+  if (store.get('theme', 'dark') === 'auto') applyTheme();
+});
+$('themeSel').addEventListener('change', e => {
+  store.set('theme', e.target.value);
+  applyTheme();
+  status(e.target.value === 'auto' ? 'Theme: auto' :
+    'Theme: ' + e.target.value);
+});
+applyTheme();
+
+/* ------------------------------------------------------------------ *
+ *  Orientation lock (#52): best effort — the API needs fullscreen on  *
+ *  most browsers, so a rejected lock degrades to a status message.    *
+ * ------------------------------------------------------------------ */
+let orientLocked = false;
+function paintOrient(){
+  $('orientBtn').setAttribute('aria-pressed', orientLocked ? 'true' : 'false');
+  $('orientBtn').textContent = orientLocked ? 'Unlock orientation' : 'Lock landscape';
+}
+$('orientBtn').addEventListener('click', async () => {
+  if (!screen.orientation || !screen.orientation.lock) {
+    $('orientStatus').textContent = 'Orientation lock is not supported on this browser.';
+    return;
+  }
+  try {
+    if (orientLocked) {
+      await screen.orientation.unlock();
+      orientLocked = false;
+      $('orientStatus').textContent = 'Orientation unlocked.';
+    } else {
+      await screen.orientation.lock('landscape');
+      orientLocked = true;
+      $('orientStatus').textContent = 'Locked to landscape.';
+    }
+  } catch (e) {
+    orientLocked = false;
+    $('orientStatus').textContent =
+      'Lock rejected — most browsers only allow it in fullscreen or an installed app.';
+  }
+  paintOrient();
+});
+paintOrient();
+
+/* ------------------------------------------------------------------ *
  *  Sheets + toolbar                                                   *
  * ------------------------------------------------------------------ */
 const sheets = [$('shApps'), $('shAudio'), $('shMore'), $('shStore'), $('shFiles')];
 let statsTimer = null;
+let lastFocused = null;
+// #53: keyboard/switch users get focus moved into an opened sheet and
+// restored to the trigger when it closes
+function focusables(el){
+  return [...el.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+    .filter(n => !n.hidden && n.style.display !== 'none' && !n.disabled);
+}
 function openSheet(el){
   const was = el.classList.contains('show');
   closeSheets();
-  if (!was) { el.classList.add('show'); $('backdrop').classList.add('show'); }
+  if (!was) {
+    el.classList.add('show');
+    $('backdrop').classList.add('show');
+    lastFocused = document.activeElement;
+    const f = focusables(el)[0];
+    if (f) setTimeout(() => f.focus({ preventScroll: true }), 120);
+  }
 }
 function closeSheets(){
-  sheets.forEach(s => s.classList.remove('show'));
+  let wasOpen = false;
+  sheets.forEach(s => { if (s.classList.contains('show')) wasOpen = true; s.classList.remove('show'); });
   $('backdrop').classList.remove('show');
+  if (wasOpen && lastFocused) {
+    try { lastFocused.focus({ preventScroll: true }); } catch (_) {}
+    lastFocused = null;
+  }
   if (typeof clipPollStop === 'function') clipPollStop();
   if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
 }
 $('backdrop').addEventListener('click', closeSheets);
+// #53: keep Tab cycling inside the open sheet (focus trap) and Escape closes
+addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeSheets(); return; }
+  if (e.key !== 'Tab') return;
+  const open = sheets.find(s => s.classList.contains('show'));
+  if (!open) return;
+  const f = focusables(open);
+  if (!f.length) return;
+  const first = f[0], last = f[f.length - 1];
+  if (!open.contains(e.target)) {
+    e.preventDefault();
+    first.focus({ preventScroll: true });
+  } else if (e.shiftKey && e.target === first) {
+    e.preventDefault();
+    last.focus({ preventScroll: true });
+  } else if (!e.shiftKey && e.target === last) {
+    e.preventDefault();
+    first.focus({ preventScroll: true });
+  }
+});
 $('bApps').addEventListener('click', () => { openSheet($('shApps')); loadApps(); });
 $('bStore').addEventListener('click', () => { openSheet($('shStore')); if (!$('shStore').dataset.loaded) storeDefault(); });
 $('bAudio').addEventListener('click', () => { openSheet($('shAudio')); updateAudioBtn(); });
@@ -541,9 +1024,11 @@ $('bMore').addEventListener('click', () => {
   openSheet($('shMore'));
   loadClipHistory();
   loadStats();
+  updateConnBox();
+  paintBarCust();
   if (typeof clipPollStart === 'function') clipPollStart();
   if (statsTimer) clearInterval(statsTimer);
-  statsTimer = setInterval(loadStats, 3000);
+  statsTimer = setInterval(() => { loadStats(); updateConnBox(); }, 3000);
 });
 $('bFull').addEventListener('click', async () => {
   try {
@@ -551,7 +1036,6 @@ $('bFull').addEventListener('click', async () => {
     else await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
   } catch(_) { status('Fullscreen blocked', true); }
 });
-addEventListener('keydown', e => { if (e.key === 'Escape') closeSheets(); });
 
 // The toolbar overlays the bottom of the remote screen, so it stays out of the
 // way: it auto-hides after a few seconds, and touching the remote screen hides
@@ -1008,6 +1492,7 @@ async function loadClipHistory(){
       const toPhone = document.createElement('button');
       toPhone.textContent = '→📱';
       toPhone.title = 'Copy to phone';
+      toPhone.setAttribute('aria-label', 'Copy history item to phone');
       toPhone.addEventListener('click', async e => {
         e.stopPropagation();
         try {
@@ -1020,6 +1505,7 @@ async function loadClipHistory(){
       const del = document.createElement('button');
       del.className = 'del';
       del.textContent = '×';
+      del.setAttribute('aria-label', 'Delete history item');
       del.addEventListener('click', async e => {
         e.stopPropagation();
         try {
@@ -1106,11 +1592,13 @@ async function loadFiles(){
       sz.className = 'sz'; sz.textContent = humanSize(f.size);
       const dl = document.createElement('button');
       dl.textContent = '⬇'; dl.title = 'Save to phone';
+      dl.setAttribute('aria-label', 'Save ' + f.name + ' to phone');
       dl.addEventListener('click', () => {
         location.href = '/api/download?name=' + encodeURIComponent(f.name);
       });
       const del = document.createElement('button');
       del.textContent = '✕'; del.title = 'Delete on desktop';
+      del.setAttribute('aria-label', 'Delete ' + f.name + ' on desktop');
       del.addEventListener('click', async () => {
         if (!confirm('Delete ' + f.name + ' on the desktop?')) return;
         try {
@@ -1483,6 +1971,177 @@ setInterval(async () => {
     if (r.status === 401) location.href = '/login';
   } catch(_) {}
 }, 60000);
+
+/* ------------------------------------------------------------------ *
+ *  PWA: service worker + install prompt (#49)                         *
+ * ------------------------------------------------------------------ */
+// Register only on secure origins (https or localhost); plain-HTTP LAN
+// setups skip the worker and keep working exactly as before.
+if ('serviceWorker' in navigator &&
+    (window.isSecureContext || ['localhost', '127.0.0.1'].includes(location.hostname))) {
+  addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').then(reg => {
+      if (reg.waiting && navigator.serviceWorker.controller)
+        status('App update ready — reload to apply');
+      reg.addEventListener('updatefound', () => {
+        const sw = reg.installing;
+        if (!sw) return;
+        sw.addEventListener('statechange', () => {
+          if (sw.state === 'installed' && navigator.serviceWorker.controller)
+            status('App update ready — reload to apply');
+        });
+      });
+    }).catch(() => {});
+  });
+}
+let installEvent = null;
+addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  installEvent = e;
+  $('installBtn').hidden = false;
+});
+$('installBtn').addEventListener('click', async () => {
+  if (!installEvent) {
+    // iOS Safari has no install prompt: Add to Home Screen is manual
+    status('Use the browser menu — Share → Add to Home Screen (iOS)');
+    return;
+  }
+  try {
+    installEvent.prompt();
+    await installEvent.userChoice;
+  } catch (_) {}
+  installEvent = null;
+  $('installBtn').hidden = true;
+});
+
+/* ------------------------------------------------------------------ *
+ *  First-run tour (#56): three cards, skip at every step, shown once  *
+ * ------------------------------------------------------------------ */
+let tourStep = 0;
+function paintTour(){
+  $(`tourTitle`).textContent = i18nT('tour.title' + (tourStep + 1), '');
+  $('tourBody').textContent = i18nT('tour.body' + (tourStep + 1), '');
+  document.querySelectorAll('#tour .tourDots i').forEach((d, i) =>
+    d.classList.toggle('on', i === tourStep));
+  $('tourNext').textContent = tourStep < 2 ? i18nT('btn.next', 'Next') : i18nT('btn.done', 'Done');
+}
+function showTour(){ tourStep = 0; paintTour(); $('tour').hidden = false; }
+function endTour(){ $('tour').hidden = true; store.set('tour', '1'); }
+$('tourNext').addEventListener('click', () => {
+  if (tourStep < 2) { tourStep++; paintTour(); } else endTour();
+});
+$('tourSkip').addEventListener('click', endTour);
+$('tourReplay').addEventListener('click', () => { closeSheets(); showTour(); });
+$('tour').addEventListener('click', e => { if (e.target.id === 'tour') endTour(); });
+if (!store.get('tour', '')) setTimeout(showTour, 2500);
+
+/* ------------------------------------------------------------------ *
+ *  Toolbar customization (#68): reorder, hide, restore                *
+ * ------------------------------------------------------------------ */
+const BAR_DEFAULT = ['bApps', 'bStore', 'bKeys', 'bTouch', 'bAudio', 'bFiles', 'bFull', 'bMore'];
+const BAR_LABELS = { bApps: 'bar.apps', bStore: 'bar.store', bKeys: 'bar.keys', bTouch: 'bar.touch',
+                     bAudio: 'bar.audio', bFiles: 'bar.files', bFull: 'bar.full', bMore: 'bar.more' };
+function loadBarOrder(){
+  let order;
+  try { order = JSON.parse(store.get('barOrder', '') || 'null'); } catch (_) { order = null; }
+  if (!Array.isArray(order)) order = [];
+  order = order.filter(id => BAR_DEFAULT.includes(id));
+  for (const id of BAR_DEFAULT) if (!order.includes(id)) order.push(id);
+  return order;
+}
+function loadBarHidden(){
+  let hidden;
+  try { hidden = JSON.parse(store.get('barHidden', '') || 'null'); } catch (_) { hidden = null; }
+  if (!Array.isArray(hidden)) hidden = [];
+  // bMore can never be hidden: it is the recovery path into settings
+  return hidden.filter(id => BAR_DEFAULT.includes(id) && id !== 'bMore');
+}
+let barOrder = loadBarOrder();
+let barHidden = loadBarHidden();
+function saveBar(){
+  store.set('barOrder', JSON.stringify(barOrder));
+  store.set('barHidden', JSON.stringify(barHidden));
+}
+function paintBar(){
+  const bar = $('bar');
+  for (const id of barOrder) { const b = $(id); if (b) bar.appendChild(b); }   // move keeps listeners
+  for (const id of barOrder) {
+    const b = $(id); if (!b) continue;
+    b.classList.toggle('bar-hidden', id !== 'bMore' && barHidden.includes(id));
+  }
+}
+function paintBarCust(){
+  const box = $('barCust');
+  if (!box) return;
+  box.textContent = '';
+  barOrder.forEach((id, i) => {
+    const row = document.createElement('div');
+    row.className = 'strow';
+    const nm = document.createElement('div');
+    nm.className = 'nm';
+    nm.textContent = i18nT(BAR_LABELS[id], id);
+    row.appendChild(nm);
+    const up = document.createElement('button');
+    up.textContent = '↑'; up.setAttribute('aria-label', 'Move ' + nm.textContent + ' up');
+    up.disabled = i === 0;
+    up.addEventListener('click', () => {
+      [barOrder[i - 1], barOrder[i]] = [barOrder[i], barOrder[i - 1]];
+      saveBar(); paintBar(); paintBarCust();
+    });
+    const down = document.createElement('button');
+    down.textContent = '↓'; down.setAttribute('aria-label', 'Move ' + nm.textContent + ' down');
+    down.disabled = i === barOrder.length - 1;
+    down.addEventListener('click', () => {
+      [barOrder[i + 1], barOrder[i]] = [barOrder[i], barOrder[i + 1]];
+      saveBar(); paintBar(); paintBarCust();
+    });
+    const cb = document.createElement('div');
+    cb.className = 'check';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = !(id !== 'bMore' && barHidden.includes(id));
+    input.disabled = id === 'bMore';   // at least one launcher stays reachable
+    input.setAttribute('aria-label', 'Show ' + nm.textContent);
+    input.addEventListener('change', e => {
+      barHidden = barHidden.filter(x => x !== id);
+      if (!e.target.checked) barHidden.push(id);
+      saveBar(); paintBar();
+    });
+    cb.appendChild(input);
+    row.appendChild(up); row.appendChild(down); row.appendChild(cb);
+    box.appendChild(row);
+  });
+}
+$('barReset').addEventListener('click', () => {
+  barOrder = BAR_DEFAULT.slice();
+  barHidden = [];
+  saveBar(); paintBar(); paintBarCust();
+  status('Toolbar restored');
+});
+// hide by long-pressing a toolbar button, with an undo toast (#68)
+let barLongFired = false;
+$('bar').addEventListener('click', e => {
+  if (barLongFired) { e.stopPropagation(); e.preventDefault(); barLongFired = false; }
+}, true);
+for (const id of BAR_DEFAULT) {
+  const b = $(id);
+  let lp = null;
+  b.addEventListener('pointerdown', () => {
+    lp = setTimeout(() => {
+      if (id === 'bMore') return;             // always keep a way back
+      barLongFired = true;
+      barHidden.push(id);
+      saveBar(); paintBar();
+      toast(i18nT(BAR_LABELS[id], id) + ' hidden', {
+        label: 'Undo',
+        fn: () => { barHidden = barHidden.filter(x => x !== id); saveBar(); paintBar(); },
+      });
+    }, 600);
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev =>
+    b.addEventListener(ev, () => clearTimeout(lp)));
+}
+paintBar();
 
 applyInsets();
 connect();
