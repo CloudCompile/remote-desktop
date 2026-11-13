@@ -996,6 +996,26 @@ function closeSheets(){
   if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
 }
 $('backdrop').addEventListener('click', closeSheets);
+// #53: keep Tab cycling inside the open sheet (focus trap) and Escape closes
+addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeSheets(); return; }
+  if (e.key !== 'Tab') return;
+  const open = sheets.find(s => s.classList.contains('show'));
+  if (!open) return;
+  const f = focusables(open);
+  if (!f.length) return;
+  const first = f[0], last = f[f.length - 1];
+  if (!open.contains(e.target)) {
+    e.preventDefault();
+    first.focus({ preventScroll: true });
+  } else if (e.shiftKey && e.target === first) {
+    e.preventDefault();
+    last.focus({ preventScroll: true });
+  } else if (!e.shiftKey && e.target === last) {
+    e.preventDefault();
+    first.focus({ preventScroll: true });
+  }
+});
 $('bApps').addEventListener('click', () => { openSheet($('shApps')); loadApps(); });
 $('bStore').addEventListener('click', () => { openSheet($('shStore')); if (!$('shStore').dataset.loaded) storeDefault(); });
 $('bAudio').addEventListener('click', () => { openSheet($('shAudio')); updateAudioBtn(); });
@@ -1016,7 +1036,6 @@ $('bFull').addEventListener('click', async () => {
     else await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
   } catch(_) { status('Fullscreen blocked', true); }
 });
-addEventListener('keydown', e => { if (e.key === 'Escape') closeSheets(); });
 
 // The toolbar overlays the bottom of the remote screen, so it stays out of the
 // way: it auto-hides after a few seconds, and touching the remote screen hides
