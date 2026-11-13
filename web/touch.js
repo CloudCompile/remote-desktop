@@ -227,10 +227,15 @@ export function initTouch(app) {
 
   /* ---------------- coordinate mapping ---------------- */
   // viewport (client) coordinates -> noVNC canvas coordinates, compensating
-  // for the zoom layer; used by direct-touch taps and direct scroll (#41 #42)
+  // for the zoom layer AND for the letterbox offset noVNC's flex container
+  // adds when centering the canvas (margin: auto); used by direct-touch taps
+  // and direct scroll (#41 #42)
   function clientToCanvas(cx, cy) {
     const b = getRect();
-    return { x: (cx - b.left - zoom.panX) / zoom.z, y: (cy - b.top - zoom.panY) / zoom.z };
+    let offX = 0, offY = 0;
+    try { const box = canvasBox(); offX = box.offX; offY = box.offY; } catch (_) {}
+    return { x: (cx - b.left - zoom.panX) / zoom.z - offX,
+             y: (cy - b.top - zoom.panY) / zoom.z - offY };
   }
   function sendCursor(mask) {
     const s = remoteToScreen(cursorPos.rx, cursorPos.ry);
@@ -248,9 +253,11 @@ export function initTouch(app) {
     cursorPos.rx = Math.max(0, Math.min(fbSize.w, cursorPos.rx));
     cursorPos.ry = Math.max(0, Math.min(fbSize.h, cursorPos.ry));
     const r = getRect();
+    let offX = 0, offY = 0;
+    try { const box = canvasBox(); offX = box.offX; offY = box.offY; } catch (_) {}
     const s = remoteToScreen(cursorPos.rx, cursorPos.ry);
-    cursorPos.sx = r.left + zoom.panX + s.x * zoom.z;
-    cursorPos.sy = r.top + zoom.panY + s.y * zoom.z;
+    cursorPos.sx = r.left + zoom.panX + (offX + s.x) * zoom.z;
+    cursorPos.sy = r.top + zoom.panY + (offY + s.y) * zoom.z;
     paintCursor();
   }
   function centerCursor() {
