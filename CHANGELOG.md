@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/), semver.
 
 ## [Unreleased]
 
+### Added
+
+- Devices in (desktop browser clients): share the local PC's microphone
+  and webcam into the desktop — mic becomes a `remote_mic` PulseAudio
+  source, webcam decodes onto a v4l2loopback device (`/api/mic`,
+  `/api/camera` + status endpoints). Controls hidden on phones/tablets.
+
 ### Planned
 
 - v2.0.1 through v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones,

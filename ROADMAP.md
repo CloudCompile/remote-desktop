@@ -258,7 +258,7 @@ Icebox items are tracked in the [Icebox milestone](https://github.com/CloudCompi
 | [#100](https://github.com/CloudCompile/remote-desktop/issues/100) | Detect codec support and provide a PCM fallback UI | Audio | P1 | M |
 | [#99](https://github.com/CloudCompile/remote-desktop/issues/99) | Improve jitter buffering and drift recovery | Audio | P1 | M |
 | [#124](https://github.com/CloudCompile/remote-desktop/issues/124) | Recover audio across visibility changes and reconnects | Audio | P1 | M |
-| [#97](https://github.com/CloudCompile/remote-desktop/issues/97) | Stream phone microphone audio into the desktop | Audio | P1 | L |
+| [#97](https://github.com/CloudCompile/remote-desktop/issues/97) | Add desktop-browser microphone and webcam input | Audio | P1 | L |
 | [#101](https://github.com/CloudCompile/remote-desktop/issues/101) | Add a media keys panel and shortcuts | Mobile | P2 | S |
 | [#98](https://github.com/CloudCompile/remote-desktop/issues/98) | Add an audio-only low-bandwidth mode | Audio | P2 | S |
 | [#95](https://github.com/CloudCompile/remote-desktop/issues/95) | Add per-application volume and mute | Audio | P2 | M |

@@ -53,6 +53,11 @@ between phone and desktop, and upload/download files.
   list, download and delete files there.
 - **Audio.** Desktop audio via PulseAudio → ffmpeg, streamed as Opus/WebM
   (~100 kbps, good on mobile data) or raw PCM for lowest latency.
+- **Mic & webcam in (desktop browsers).** When you open the UI from a
+  desktop PC, its microphone and webcam can be shared *into* the desktop:
+  the mic becomes a `remote_mic` PulseAudio source and the webcam a
+  v4l2loopback device that desktop apps can use. Controls are hidden on
+  phones and tablets; camera-in needs the `v4l2loopback` kernel module.
 - **Live system stats** (CPU, RAM, disk, load, uptime) in the More sheet.
 - **Auth everywhere.** Password (crypt SHA-512) + signed session cookie on
   every endpoint except `/login`, `/api/login` and `/api/health`; login is
@@ -71,6 +76,7 @@ Tested on Ubuntu 24.04 with an existing X11 session on `:1`.
 | `ffmpeg`, `pulseaudio` | audio capture |
 | `dpkg`, `appstreamcli`/`apt-cache`, `sudo` | optional app store |
 | Chrome/Chromium | optional web-app windows (`webapps.sh`) |
+| `v4l2loopback` (dkms) | optional webcam-in device (`sudo modprobe v4l2loopback`) |
 | `cloudflared` **or** `tailscale` | optional public HTTPS access |
 
 Install on Debian/Ubuntu:
