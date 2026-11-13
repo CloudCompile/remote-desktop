@@ -59,7 +59,23 @@ SCHEMA = [
         "RD_FILES_DIR",
         "path",
         lambda: os.path.join(HOME, "Downloads"),
-        "Directory for file upload/download (created if missing).",
+        "Directory for file upload/download (created if missing). Used as the default (single) shared root.",
+    ),
+    _Setting(
+        "files_roots",
+        "RD_FILES_ROOTS",
+        "str",
+        "",
+        'Shared roots for the file manager (#84): comma-separated PATH[:LABEL[:FLAGS]] with FLAGS "ro" '
+        'and/or "quota=BYTES". Empty = single root from RD_FILES_DIR. Example: '
+        '"/data/projects:Projects:ro,/srv/media:Media:quota=1073741824".',
+    ),
+    _Setting(
+        "files_reserve",
+        "RD_FILES_RESERVE",
+        "bytes",
+        64 * 1024**2,
+        "Free-space reserve per root (#89): uploads that would leave less free space are refused (0 disables).",
     ),
     _Setting(
         "trusted_proxies", "RD_TRUSTED_PROXIES", "csv", "", "Comma-separated proxy IPs allowed to set X-Forwarded-For."
@@ -140,6 +156,20 @@ SCHEMA = [
         "path",
         DEFAULT_STATE_DIR,
         "Directory for backups, display state and the state manifest.",
+    ),
+    _Setting(
+        "archive_cap",
+        "RD_ARCHIVE_CAP",
+        "bytes",
+        2 * 1024**3,
+        "Maximum uncompressed size when creating or extracting an archive (#85).",
+    ),
+    _Setting(
+        "transfer_retention",
+        "RD_TRANSFER_RETENTION",
+        "duration",
+        24 * 3600,
+        "Seconds completed/failed transfer-queue jobs are kept before GC (#88).",
     ),
     _Setting(
         "ready_cache", "RD_READY_CACHE", "duration", 2, "Seconds readiness probes (/api/ready) results are cached."
@@ -278,6 +308,18 @@ def validate(values=None):
     )
     need(0 <= v["vnc_retries"] <= 100, f"RD_VNC_RETRIES: must be 0-100, got {v['vnc_retries']}")
     need(0.05 <= v["vnc_backoff"] <= 30, f"RD_VNC_BACKOFF: seconds must be 0.05-30, got {v['vnc_backoff']}")
+    need(
+        0 <= v["files_reserve"] <= 1024 * 1024**3,
+        f"RD_FILES_RESERVE: bytes must be 0-1GiB, got {v['files_reserve']}",
+    )
+    need(
+        1024 <= v["archive_cap"] <= 64 * 1024**3,
+        f"RD_ARCHIVE_CAP: bytes must be 1KiB-64GiB, got {v['archive_cap']}",
+    )
+    need(
+        60 <= v["transfer_retention"] <= 30 * 86_400,
+        f"RD_TRANSFER_RETENTION: seconds must be 60-2592000, got {v['transfer_retention']}",
+    )
     fd = v["files_dir"]
     need(not os.path.exists(fd) or os.path.isdir(fd), f"RD_FILES_DIR: {fd!r} exists and is not a directory")
     return errs

@@ -756,6 +756,9 @@ def main(argv=None):
         return 2
 
     state.snapshot("startup")  # 30: versioned backup of runtime state
+    for err in files.setup_roots():  # #84: invalid/missing roots reported at startup
+        log.error(err)
+        print(err, file=sys.stderr)
     clipboard._clip_load()
     files.cleanup_partial_uploads()
     store.restore_jobs()  # #66: job status survives a restart
