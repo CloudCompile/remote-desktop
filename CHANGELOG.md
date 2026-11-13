@@ -7,8 +7,49 @@ Format: [Keep a Changelog](https://keepachangelog.com/), semver.
 
 ### Planned
 
-- v2.5.0 through v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones,
-  release themes and linked issues.
+- v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones, release themes
+  and linked issues.
+
+## [2.5.0] — 2026-11-13
+
+### Added
+
+- Audio device control: sink enumeration with volume/mute, persisted
+  and re-applied at startup, with graceful fallback when a sink
+  disappears (#94).
+- Per-application stream volume grouped by app, with per-app defaults
+  inherited by new streams (#95).
+- Audio quality tiers: low/medium/high/custom opus bitrate with server
+  compression tuning, and an adaptive client mode driven by RTT and
+  buffer health (#96).
+- Shared capture: one ffmpeg per (source, codec, bitrate) fans out to
+  multiple listeners with bounded per-listener queues; slow listeners
+  are dropped without stalling the producer (#105).
+- Audio-only mode: video disconnected, thumbnails and polling paused,
+  persistent badge, instant restore (#98).
+- Jitter management: adaptive target, drift-corrected playback rate,
+  live-edge resync, underrun/overrun counters on both Opus and PCM
+  paths (#99).
+- Playback capability probing: MSE/Opus and WebAudio detected before
+  any ffmpeg spawn, with actionable feedback and a PCM fallback (#100).
+- Stream recovery: visible Retry state, audio restarts on reconnect and
+  tab visibility, server-side recovery from PulseAudio restarts (#124).
+- Media-keys panel via MPRIS with XF86 fallback and active-player
+  display (#101).
+- Audio recording to the files root in self-contained clusters with
+  time/size caps, clean finalization and crash recovery (#102).
+- Level meter (RMS/peak, 5 Hz, sheet-open only) distinguishing silence,
+  capture stall and clipping (#103).
+- Audio diagnostics view with redacted one-tap copy and a test tone
+  (#106).
+- docs/TROUBLESHOOTING.md: PulseAudio vs PipeWire, symptom→cause→fix
+  matrix (#107).
+- ADR-0006 (WebRTC audio deferred past v2.x, with rationale and a
+  runnable prototype) (#104).
+
+### Fixed
+
+- Removed a duplicate `/api/pins` route (first match won; harmless).
 
 ## [2.4.0] — 2026-11-13
 
