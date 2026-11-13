@@ -7,8 +7,38 @@ Format: [Keep a Changelog](https://keepachangelog.com/), semver.
 
 ### Planned
 
-- v2.3.0 through v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones,
+- v2.4.0 through v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones,
   release themes and linked issues.
+
+## [2.3.0] — 2026-11-13
+
+### Added
+
+- Window switcher with live thumbnails (single-frame JPEG via ffmpeg
+  x11grab, size-capped) and window actions: focus, minimize, maximize,
+  restore, center, close (#59, #60).
+- Layout slots: apply halves/thirds tiling presets to any window (#61).
+- Flatpak and Snap discovery merged into `/api/apps` with a `source`
+  field; focus matching handles Flatpak/Snap WM_CLASS quirks (#65, #73).
+- App Store: install/uninstall/update with a serial apt queue, queue
+  position, cancel, and live per-install log tail; curated collection
+  chips; backend capability reporting (#66, #67, #69).
+- Clipboard v2: pinning (pinned items never trim), text search, tags,
+  inline image previews with save-to-phone, and image/URI paste-back
+  (#70, #71).
+- Opt-in phone→desktop clipboard sync via a visible-tab poll, default
+  off, with a documented consent model (#72).
+- Paste-as-keystrokes mode with confirm and rate limiting (#74).
+- Launch-failure toasts with hints and request ids (#75).
+- Per-app window geometry persistence and restore, toggleable (#76).
+- Custom app entries with validated CRUD and a UI editor (#63).
+- Frequent/recency ranking and pin folders for the app grid (#62, #64).
+- ETag/304 caching on `/api/apps` (#77).
+
+### Fixed
+
+- windows.py WM_CLASS guard for focus matching; display geometry is now
+  reported in `/api/windows`.
 
 ## [2.2.0] — 2026-11-13
 
