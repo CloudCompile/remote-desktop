@@ -16,13 +16,25 @@ import control
 
 # ---------------------------------------------------------------- tokens
 
-def test_token_roundtrip():
+@pytest.fixture
+def auth(monkeypatch):
+    """A configured password so token tests pass even where .passhash is
+    absent (CI). Recomputes SECRET the same way main() does."""
+    monkeypatch.setattr(control, "PASS_HASH",
+                        "$6$rounds=1000$salt$" +
+                        control.hashlib.sha256(b"x").hexdigest())
+    monkeypatch.setattr(control, "SECRET",
+                        control.hashlib.sha256(
+                            (control.PASS_HASH + "rd-secret-v2").encode()).digest())
+
+
+def test_token_roundtrip(auth):
     tok = control._make_token(control.AUTH_USER)
     assert control._verify_token(tok) is True
 
 
-def test_token_tampered():
-    tok = control._make_token("cjhauser")
+def test_token_tampered(auth):
+    tok = control._make_token(control.AUTH_USER)
     raw = base64.urlsafe_b64decode(tok.encode() + b"==")
     payload, sig = raw.rsplit(b":", 1)
     payload = b"root:99999999999"
@@ -30,7 +42,7 @@ def test_token_tampered():
     assert control._verify_token(forged) is False
 
 
-def test_token_expired():
+def test_token_expired(auth):
     exp = int(time.time()) - 10
     payload = f"{control.AUTH_USER}:{exp}".encode()
     sig = control.hmac.new(control.SECRET, payload, hashlib.sha256).hexdigest()
@@ -38,7 +50,7 @@ def test_token_expired():
     assert control._verify_token(tok) is False
 
 
-def test_token_wrong_user():
+def test_token_wrong_user(auth):
     exp = int(time.time()) + control.TOKEN_TTL
     payload = f"somebody-else:{exp}".encode()
     sig = control.hmac.new(control.SECRET, payload, hashlib.sha256).hexdigest()
