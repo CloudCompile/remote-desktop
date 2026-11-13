@@ -384,6 +384,10 @@ def apps_response():
     if _apps_cache["etag"] and _apps_cache["fp"] == fp:
         return _apps_cache["body"], _apps_cache["etag"]
     merged = all_apps()
+    recent = state.recent_launches()  # #62: the UI shows a Recent section
+    for a in merged:
+        if a["id"] in recent:
+            a["recent"] = True
     body = json.dumps({"apps": merged}).encode()
     etag = '"apps-' + hashlib.sha1(fp.encode() + str(len(merged)).encode()).hexdigest()[:16] + '"'
     _apps_cache.update({"fp": fp, "etag": etag, "body": body})
