@@ -177,8 +177,25 @@ export function initTouch(app) {
     let b, c;
     try { b = getRect(); c = rfb._canvas.getBoundingClientRect(); } catch (_) { c = null; }
     if (el) el.style.transform = saved;
-    if (!c || !c.width || !c.height) { zoom.base = 1; return; }
+    if (!c || !c.width || !c.height) {
+      zoom.base = 1;
+      retryFill();                       // canvas not laid out yet (just connected)
+      return;
+    }
+    fillTries = 0;
     zoom.base = Math.min(4, Math.max(1, Math.max(b.width / c.width, b.height / c.height)));
+  }
+  let fillTries = 0;
+  function retryFill() {
+    if (fillTries++ > 40) return;
+    setTimeout(() => {
+      if (vpMode !== 'fill') return;
+      const prev = zoom.base;
+      fillBase();
+      if (zoom.z === prev && zoom.base !== prev) zoom.z = zoom.base;  // user hadn't zoomed
+      clampPan();
+      applyTransform();
+    }, 250);
   }
   function resetZoom() {
     fillBase();
@@ -442,7 +459,7 @@ export function initTouch(app) {
         const spread = Math.abs(d - gest.d0);
         const midMove = Math.hypot(mx - gest.mx0, my - gest.my0);
         if (spread > 12 && spread > midMove * 0.8)
-          gest.mode = (vpMode === 'remote' || !settings.tapClick) ? 'off' : 'pinch';
+          gest.mode = vpMode === 'remote' ? 'off' : 'pinch';   // no zoom in remote-resize mode
         else if (midMove > tapSlop())
           gest.mode = zoom.z > minZoom() + 0.001 ? 'pan' : 'scroll';
         else if (gest._tries === undefined) gest._tries = 0;

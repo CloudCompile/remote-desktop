@@ -212,6 +212,7 @@
          z-index:40;display:flex;align-items:center;gap:10px;background:var(--pill);
          border:1px solid var(--line);border-radius:14px;padding:8px 14px;font-size:13px;
          color:var(--fg);box-shadow:0 4px 18px var(--shadow);transition:opacity .25s}
+  #toast[hidden]{display:none}
   #toast button{min-height:36px;border:0;border-radius:9px;background:var(--accent);color:var(--accent-fg);
                 font-size:12px;padding:0 12px;font-weight:600}
 
@@ -775,17 +776,21 @@ function connect(){
     else initTouchOnce();
     applyVpMode();
     paintTouchBtn();
-    setTimeout(() => { applyVpMode(); matchDesktop(true); }, 1200);
+    // re-apply once the first framebuffer has laid out (fill-mode base zoom,
+    // remote-resize request) and again for slow links
+    setTimeout(applyVpMode, 1200);
+    setTimeout(applyVpMode, 2600);
     requestWakeLock();
   });
   rfb.addEventListener('disconnect', e => {
     connected = false;
     releaseWakeLock();
     stopPing();
-    reconnectCount++;
+    const clean = e.detail.clean || userDisconnected;
+    if (!clean) reconnectCount++;          // count only auto-reconnects (#50)
     lastDropReason = (e.detail && e.detail.reason) ? String(e.detail.reason)
-      : (e.detail && e.detail.clean ? 'clean' : 'unknown');
-    if (e.detail.clean || userDisconnected) {
+      : (clean ? 'clean' : 'unknown');
+    if (clean) {
       status('Disconnected');
       $('overlay').classList.remove('hide');
       $('ovSpin').style.display = 'none';
