@@ -628,6 +628,16 @@ def test_upload_init_quota_refusal(sess):
     assert e.value.status == 507 and "quota" in str(e.value)
 
 
+def test_upload_init_reports_existing_name(sess):
+    root = sess.resolve_root("alpha")
+    r = rd_files.upload_init(root, "", "dup.bin", size=8)
+    assert r["exists"] is False  # #80: client asks overwrite/rename only when set
+    rd_files.upload_chunk(r["session"], 0, b"12345678")
+    rd_files.upload_complete(r["session"])
+    r2 = rd_files.upload_init(root, "", "dup.bin", size=8)
+    assert r2["exists"] is True
+
+
 # ---------------------------------------------------------------- #88 transfer queue
 
 

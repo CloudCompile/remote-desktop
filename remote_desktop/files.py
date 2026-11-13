@@ -1306,7 +1306,16 @@ def upload_init(root, dirpath, name, size=0, sha256="", chunk_size=0, resume="")
         "updated": int(time.time()),
     }
     _session_write_meta(sdir, meta)
-    return {"session": sid, "offset": 0, "size": size, "chunk_size": chunk_size, "name": name, "path": meta["dir"]}
+    exists = False
+    dfd = open_dir_fd(root.path, parts)
+    try:
+        os.lstat(name, dir_fd=dfd)
+        exists = True
+    except OSError:
+        pass
+    finally:
+        os.close(dfd)
+    return {"session": sid, "offset": 0, "size": size, "chunk_size": chunk_size, "name": name, "path": meta["dir"], "exists": exists}
 
 
 def upload_chunk(sid, offset, body, chunk_sha=""):
