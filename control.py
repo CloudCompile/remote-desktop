@@ -27,7 +27,10 @@ import struct
 import subprocess
 import threading
 import time
-import crypt
+try:
+    import crypt  # removed in Python 3.13; login falls back to "no logins"
+except ImportError:  # pragma: no cover
+    crypt = None
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote
 
@@ -37,6 +40,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(BASE_DIR, "web")
 LOG_FILE = "/tmp/remote-control.log"
 HOME = os.path.expanduser("~")
+VERSION = "2.0.1"
+_START_TIME = time.time()
 
 ENV = {
     "DISPLAY": os.environ.get("RD_DISPLAY", ":1"),
@@ -55,6 +60,11 @@ SECRET = hashlib.sha256((PASS_HASH + "rd-secret-v2").encode()).digest()
 TOKEN_TTL = 7 * 24 * 3600  # 7 days
 MAX_BODY = 1 << 20         # 1 MiB request bodies
 LOGIN_ATTEMPTS = {}        # ip -> [timestamps]  (simple rate limit)
+LOGIN_ATTEMPTS_MAX_IPS = 10_000  # hard bound so a spoof flood cannot grow it forever
+LOGIN_WINDOW = 600         # 10 minutes
+LOGIN_MAX_ATTEMPTS = 5
+TRUSTED_PROXIES = {p.strip() for p in os.environ.get("RD_TRUSTED_PROXIES", "").split(",") if p.strip()}
+WS_MAX_MESSAGE = 8 * 1024 * 1024  # 8 MiB cap on any single websocket message
 
 APP_CATALOG = [
     {"name": "chrome",   "label": "Chrome",     "pkg": "google-chrome-stable",
@@ -134,6 +144,37 @@ def _die_with_parent():
         libc.prctl(1, signal.SIGHUP)  # PR_SET_PDEATHSIG
     except Exception:
         pass
+
+
+# every ffmpeg/stream child we spawn, so shutdown can reap stragglers (#14)
+_child_procs = set()
+_child_procs_lock = threading.Lock()
+
+
+def _spawn_stream(cmd, **popen_kwargs):
+    """Popen a streaming child registered for shutdown reaping."""
+    proc = subprocess.Popen(cmd, **popen_kwargs)
+    with _child_procs_lock:
+        _child_procs.add(proc)
+    return proc
+
+
+def _reap_children(timeout=3):
+    """Kill and wait for every registered streaming child."""
+    with _child_procs_lock:
+        procs = list(_child_procs)
+        _child_procs.clear()
+    for p in procs:
+        try:
+            p.kill()
+        except Exception:
+            pass
+    for p in procs:
+        try:
+            p.wait(timeout=timeout)
+        except Exception:
+            pass
+    return len(procs)
 
 
 def audio_source():
@@ -700,21 +741,54 @@ def clip_add(text, source):
 
 
 def _clip_save():
+    """Atomic write (#17): dump to a temp file in the same directory, fsync,
+    then rename over the live file so a crash or full disk can never
+    truncate .cliphistory.json."""
     try:
-        with open(CLIP_HISTORY_FILE, "w") as f:
+        tmp = CLIP_HISTORY_FILE + ".tmp"
+        with open(tmp, "w") as f:
             json.dump(_clip_history, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, CLIP_HISTORY_FILE)
         os.chmod(CLIP_HISTORY_FILE, 0o600)
     except Exception:
         pass
 
 
 def _clip_load():
+    """Load the persisted history defensively (#17): validate the JSON
+    structure, coerce/skip bad entries, deduplicate, trim to the maximum,
+    and quarantine a corrupt file instead of crashing or losing the good
+    copy."""
     global _clip_history
+    loaded = []
     try:
         with open(CLIP_HISTORY_FILE) as f:
-            _clip_history = json.load(f)[:CLIP_HISTORY_MAX]
-    except Exception:
-        _clip_history = []
+            raw = json.load(f)
+        if isinstance(raw, list):
+            seen = set()
+            for it in raw:
+                if not isinstance(it, dict) or not isinstance(it.get("text"), str):
+                    continue
+                cid = it.get("id") or hashlib.sha1(
+                    f"{time.time_ns()}:{it['text'][:64]}".encode()).hexdigest()[:12]
+                if cid in seen:
+                    continue
+                seen.add(cid)
+                loaded.append({
+                    "id": str(cid)[:64], "text": it["text"][:CLIP_ITEM_MAX],
+                    "time": int(it.get("time") or 0),
+                    "source": str(it.get("source") or "desktop")[:16],
+                })
+    except (ValueError, OSError):
+        try:
+            os.replace(CLIP_HISTORY_FILE, CLIP_HISTORY_FILE +
+                       f".corrupt-{int(time.time())}")
+            log("clipboard history was corrupt; quarantined and starting empty")
+        except Exception:
+            pass
+    _clip_history = loaded[:CLIP_HISTORY_MAX]
 
 
 def clip_history():
@@ -792,7 +866,7 @@ def _verify_token(tok):
 
 def _verify_password(pw):
     try:
-        return bool(PASS_HASH) and crypt.crypt(pw, PASS_HASH) == PASS_HASH
+        return bool(PASS_HASH and crypt) and crypt.crypt(pw, PASS_HASH) == PASS_HASH
     except Exception:
         return False
 
@@ -807,13 +881,28 @@ def _parse_cookie(handler, name):
 
 
 def _client_ip(handler):
-    return handler.headers.get("X-Forwarded-For", handler.client_address[0]).split(",")[0].strip()
+    """Client IP for rate limiting. X-Forwarded-For is honoured only when the
+    direct peer is an explicitly trusted proxy (RD_TRUSTED_PROXIES), so a
+    spoofed header from an arbitrary client cannot rotate its identity (#16)."""
+    peer = handler.client_address[0]
+    if peer in TRUSTED_PROXIES:
+        return handler.headers.get("X-Forwarded-For", peer).split(",")[0].strip()
+    return peer
 
 
 def _login_allowed(ip):
+    """Sliding-window rate limit. State is bounded: expired entries are
+    pruned on access and the whole table is capped so a flood of spoofed
+    IPs cannot grow memory forever (#16)."""
     now = time.time()
-    LOGIN_ATTEMPTS[ip] = [t for t in LOGIN_ATTEMPTS.get(ip, []) if now - t < 600]
-    return len(LOGIN_ATTEMPTS[ip]) < 5
+    if len(LOGIN_ATTEMPTS) > LOGIN_ATTEMPTS_MAX_IPS:
+        for k in sorted(LOGIN_ATTEMPTS, key=lambda k: max(LOGIN_ATTEMPTS[k], default=0))[:LOGIN_ATTEMPTS_MAX_IPS // 2]:
+            del LOGIN_ATTEMPTS[k]
+    attempts = LOGIN_ATTEMPTS.get(ip)
+    if attempts is None:
+        attempts = LOGIN_ATTEMPTS[ip] = []
+    attempts[:] = [t for t in attempts if now - t < LOGIN_WINDOW]
+    return len(attempts) < LOGIN_MAX_ATTEMPTS
 
 
 # ------------------------------------------------------------------ static files
@@ -871,33 +960,73 @@ def _read_exact(rfile, n):
     return buf
 
 
-def _ws_read_frame(rfile):
-    """Read one client frame. Returns (opcode, payload) or None on EOF/error."""
-    hdr = rfile.read(2)
-    if len(hdr) < 2:
-        return None
-    b1, b2 = hdr[0], hdr[1]
-    op = b1 & 0x0f
-    ln = b2 & 0x7f
-    if ln == 126:
-        ext = rfile.read(2)
-        if len(ext) < 2:
-            return None
-        ln = struct.unpack(">H", ext)[0]
-    elif ln == 127:
-        ext = rfile.read(8)
-        if len(ext) < 8:
-            return None
-        ln = struct.unpack(">Q", ext)[0]
-    if ln > 64 * 1024 * 1024:
-        return None
-    mask = rfile.read(4) if b2 & 0x80 else b""
-    data = _read_exact(rfile, ln) if ln else b""
-    if data is None:
-        return None
-    if mask:
-        data = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
-    return op, data
+class _WsReader:
+    """Stateful RFC6455 client-message reader (#10): reassembles fragmented
+    frames, tolerates interleaved ping/pong/close, enforces client masking
+    and a hard size cap. read() returns (opcode, payload) for data messages,
+    ping (0x9) and close (0x8); None on EOF, protocol error or oversize."""
+
+    def __init__(self, rfile, max_message=WS_MAX_MESSAGE):
+        self.rfile = rfile
+        self.max_message = max_message
+        self.msg_op = None
+        self.buf = bytearray()
+
+    def read(self):
+        while True:
+            hdr = self.rfile.read(2)
+            if len(hdr) < 2:
+                return None
+            b1, b2 = hdr[0], hdr[1]
+            op = b1 & 0x0f
+            masked = bool(b2 & 0x80)
+            fin = bool(b1 & 0x80)
+            ln = b2 & 0x7f
+            if ln == 126:
+                ext = self.rfile.read(2)
+                if len(ext) < 2:
+                    return None
+                ln = struct.unpack(">H", ext)[0]
+            elif ln == 127:
+                ext = self.rfile.read(8)
+                if len(ext) < 8:
+                    return None
+                ln = struct.unpack(">Q", ext)[0]
+            mk = self.rfile.read(4) if masked else b""
+            if masked and len(mk) < 4:
+                return None
+            if ln > self.max_message or len(self.buf) + ln > self.max_message:
+                return None
+            data = _read_exact(self.rfile, ln) if ln else b""
+            if data is None:
+                return None
+            if mk:
+                data = bytes(b ^ mk[i % 4] for i, b in enumerate(data))
+            if op == 0x8:                                  # close
+                return 0x8, data
+            if op in (0x9, 0xA):                           # ping/pong (never fragmented)
+                return op, data
+            if not masked:                                 # clients must mask (#10)
+                return None
+            if op != 0x0 and self.msg_op is not None:      # new data frame mid-message
+                return None
+            if op == 0x0 and self.msg_op is None:          # stray continuation
+                return None
+            if self.msg_op is None:
+                self.msg_op = op
+            self.buf += data
+            if fin:
+                payload = bytes(self.buf)
+                op_out = self.msg_op          # set above for any legal data frame
+                self.msg_op, self.buf = None, bytearray()
+                return op_out, payload
+
+
+def _ws_read_frame(rfile, max_message=WS_MAX_MESSAGE):
+    """Stateless convenience wrapper: read one complete client message from
+    a fresh stream. Connection-long readers must hold a _WsReader so
+    fragment state survives interleaved control frames."""
+    return _WsReader(rfile, max_message).read()
 
 
 def _ws_frame(data):
@@ -933,12 +1062,13 @@ def websocket_proxy(handler):
 
     stop = threading.Event()
     rfile, wfile = handler.rfile, handler.wfile
+    reader = _WsReader(rfile)
 
     def client_to_target():
         """Reader thread: parse client frames, forward payload to the VNC server."""
         try:
             while not stop.is_set():
-                fr = _ws_read_frame(rfile)
+                fr = reader.read()
                 if fr is None:
                     break
                 op, payload = fr
@@ -1020,16 +1150,18 @@ def _ws_to_stdin(handler, cmd, opened_log, closed_log):
     """Shared device-in loop: authenticated websocket whose binary frames
     are piped into a subprocess (ffmpeg). Blocks until the client leaves."""
     try:
-        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-                                stderr=open(AUDIO_LOG, "ab"), preexec_fn=_die_with_parent,
-                                env=_pa_env())
+        proc = _spawn_stream(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                             stderr=open(AUDIO_LOG, "ab"), preexec_fn=_die_with_parent,
+                             env=_pa_env())
     except Exception as e:
         log(f"device-in: ffmpeg start failed: {e}")
         return
+    started = time.time()
     log(opened_log)
+    reader = _WsReader(handler.rfile)
     try:
         while True:
-            fr = _ws_read_frame(handler.rfile)
+            fr = reader.read()
             if fr is None:
                 break
             op, payload = fr
@@ -1038,17 +1170,19 @@ def _ws_to_stdin(handler, cmd, opened_log, closed_log):
             if op == 0x9:
                 _ws_pong(handler, payload)
                 continue
-            if payload and op in (0x1, 0x2, 0x0):
+            if payload and op in (0x1, 0x2):
                 proc.stdin.write(payload)   # blocks if ffmpeg falls behind = backpressure
     except Exception:
         pass
     finally:
+        with _child_procs_lock:
+            _child_procs.discard(proc)
         try:
             proc.stdin.close()
             proc.wait(timeout=3)
         except Exception:
             proc.kill()
-        log(closed_log)
+        log(f"{closed_log} after {time.time() - started:.0f}s")
 
 
 def websocket_mic(handler):
@@ -1181,6 +1315,8 @@ def list_files():
     os.makedirs(FILES_DIR, exist_ok=True)
     out = []
     for fn in os.listdir(FILES_DIR):
+        if fn.startswith("."):          # skip partial uploads and dotfiles
+            continue
         p = os.path.join(FILES_DIR, fn)
         try:
             if os.path.isfile(p) and not os.path.islink(p):
@@ -1192,10 +1328,31 @@ def list_files():
     return out
 
 
+def cleanup_partial_uploads(max_age=24 * 3600):
+    """Remove stale hidden partial-upload files left by crashed uploads (#15)."""
+    try:
+        os.makedirs(FILES_DIR, exist_ok=True)
+        now = time.time()
+        removed = 0
+        for fn in os.listdir(FILES_DIR):
+            if not fn.startswith(".upload-") or not fn.endswith(".part"):
+                continue
+            p = os.path.join(FILES_DIR, fn)
+            try:
+                if now - os.path.getmtime(p) > max_age:
+                    os.remove(p)
+                    removed += 1
+            except OSError:
+                continue
+        return removed
+    except Exception:
+        return 0
+
+
 def _safe_file_path(name):
-    """basename-only, no traversal — resolve inside ~/Downloads."""
+    """basename-only, no traversal, no hidden files — resolve inside ~/Downloads."""
     name = os.path.basename(name or "")
-    if not name or name in (".", "..") or "\x00" in name or len(name) > 255:
+    if not name or name.startswith(".") or "\x00" in name or len(name) > 255:
         return None
     p = os.path.realpath(os.path.join(FILES_DIR, name))
     if os.path.dirname(p) != os.path.realpath(FILES_DIR):
@@ -1289,11 +1446,13 @@ class Handler(BaseHTTPRequestHandler):
         cmd = ["ffmpeg", "-loglevel", "warning", "-fflags", "nobuffer", "-flags", "low_delay",
                "-f", "pulse", "-i", audio_source(), *codec_args]
         try:
-            proc = subprocess.Popen(cmd, env=_pa_env(), stdout=subprocess.PIPE,
-                                    stderr=open(AUDIO_LOG, "ab"), preexec_fn=_die_with_parent)
+            proc = _spawn_stream(cmd, env=_pa_env(), stdout=subprocess.PIPE,
+                                 stderr=open(AUDIO_LOG, "ab"), preexec_fn=_die_with_parent)
         except Exception as e:
             log(f"ffmpeg start failed: {e}")
             return
+        started = time.time()
+        log(f"audio open  {self.path.split('?')[0]} {_client_ip(self)}")
         try:
             while True:
                 chunk = proc.stdout.read1(4096)
@@ -1304,11 +1463,14 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass  # client went away; normal on mobile when the tab is backgrounded
         finally:
+            with _child_procs_lock:
+                _child_procs.discard(proc)
             try:
                 proc.kill()
                 proc.wait(timeout=3)
             except Exception:
                 pass
+            log(f"audio close {self.path.split('?')[0]} after {time.time() - started:.0f}s")
 
     # ---- GET
     def do_GET(self):
@@ -1321,7 +1483,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # public endpoints
         if path == "/api/health":
-            return self._json(200, {"ok": True, "time": int(time.time())})
+            return self._json(200, health())
         if path == "/api/login":
             return self._login()
         if path == "/login":
@@ -1504,9 +1666,13 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError:
                     remaining = 0
                 os.makedirs(FILES_DIR, exist_ok=True)
+                # atomic upload (#15): stream to a hidden temp file in the same
+                # directory, fsync, then rename over the target so a crash or
+                # full disk can never leave a truncated "real" file behind
+                tmp = os.path.join(FILES_DIR, f".upload-{os.getpid()}-{int(time.time()*1000)}.part")
                 n = 0
                 try:
-                    with open(p, "wb") as f:
+                    with open(tmp, "wb") as f:
                         while remaining > 0:
                             chunk = self.rfile.read(min(1 << 16, remaining))
                             if not chunk:
@@ -1516,12 +1682,15 @@ class Handler(BaseHTTPRequestHandler):
                             if n > UPLOAD_LIMIT:
                                 raise OverflowError
                             f.write(chunk)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    os.replace(tmp, p)   # atomic on the same filesystem
                 except OverflowError:
-                    try: os.remove(p)
+                    try: os.remove(tmp)
                     except OSError: pass
                     return self._json(413, {"ok": False, "error": "file too large (2GB limit)"})
                 except Exception as e:
-                    try: os.remove(p)
+                    try: os.remove(tmp)
                     except OSError: pass
                     return self._json(500, {"ok": False, "error": str(e)[:200]})
                 return self._json(200, {"ok": True, "name": name, "size": n})
@@ -1594,9 +1763,26 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(401, {"ok": False})
 
 
+def health():
+    """Public liveness/version snapshot (#18). Deliberately minimal: no host
+    details, no user data."""
+    with _child_procs_lock:
+        streams = len(_child_procs)
+    return {
+        "ok": True,
+        "version": VERSION,
+        "time": int(time.time()),
+        "uptime_s": int(time.time() - _START_TIME),
+        "active_streams": streams,
+        "ffmpeg": bool(shutil.which("ffmpeg")),
+        "pactl": bool(shutil.which("pactl")),
+    }
+
+
 def main():
     ThreadingHTTPServer.allow_reuse_address = True
     _clip_load()
+    cleanup_partial_uploads()
     # prime the watcher with whatever is currently selected so a restart
     # doesn't re-record the existing clipboard as a "new" history entry
     try:
@@ -1605,14 +1791,26 @@ def main():
     except Exception:
         pass
     threading.Thread(target=clipboard_watcher, daemon=True).start()
+
     httpd = ThreadingHTTPServer(("127.0.0.1", 8090), Handler)
     httpd.daemon_threads = True
-    log("control server starting on 127.0.0.1:8090")
+
+    def _shutdown(signum, _frame):
+        log(f"signal {signum}: shutting down, reaping children")
+        _reap_children()
+        threading.Thread(target=httpd.shutdown, daemon=True).start()
+
+    signal.signal(signal.SIGTERM, _shutdown)
+    signal.signal(signal.SIGINT, _shutdown)
+    log(f"control server starting on 127.0.0.1:8090 (v{VERSION})")
     print("Remote control server: http://127.0.0.1:8090  (log: " + LOG_FILE + ")")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
+    finally:
+        _reap_children()
+        httpd.server_close()
 
 
 if __name__ == "__main__":

@@ -12,6 +12,8 @@ between phone and desktop, and upload/download files.
 
 > **Roadmap:** eight planned releases through v3.0.0, each with a milestone,
 > linked issues and a project board. See [ROADMAP.md](ROADMAP.md).
+> Known limits are documented in
+> [docs/KNOWN-LIMITATIONS.md](docs/KNOWN-LIMITATIONS.md).
 
 ```
 ┌──────────────┐   HTTPS    ┌───────────────────────────────┐   RFB    ┌──────────────┐
