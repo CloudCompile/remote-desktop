@@ -27,6 +27,9 @@ Every setting, its environment variable, default and meaning — generated from 
 | `RD_MAX_WS` | int | `32` | Maximum concurrent /websockify VNC websocket proxies. |
 | `RD_MAX_AUDIO` | int | `8` | Maximum concurrent audio streams (ffmpeg children). |
 | `RD_MAX_MEDIA_IN` | int | `2` | Maximum concurrent device-in streams (mic + webcam). |
+| `RD_AUDIO_SHARED` | bool | `True` | Share one ffmpeg capture across audio listeners with the same quality (#105). Set 0 for per-client capture (isolation). |
+| `RD_REC_MAX_MINUTES` | int | `120` | Maximum desktop-audio recording duration in minutes (#102). |
+| `RD_REC_MAX_MB` | int | `200` | Maximum desktop-audio recording size in MiB (#102). |
 | `RD_HTTP_TIMEOUT` | duration | `120` | Seconds an idle keep-alive HTTP connection is kept open. |
 | `RD_WS_IDLE_TIMEOUT` | duration | `300` | Seconds a websocket may stay silent before it is closed. |
 | `RD_WS_SEND_TIMEOUT` | duration | `5` | Seconds to wait for a websocket client to accept bytes before it is dropped as slow. |

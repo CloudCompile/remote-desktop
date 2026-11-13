@@ -78,6 +78,48 @@ def display_state_file():
     return os.path.join(state_dir(), "display.json")
 
 
+def audio_state_file():
+    return os.path.join(state_dir(), "audio.json")
+
+
+def load_audio_state():
+    """Persisted audio preferences (#94/#95): selected sink, sink volume
+    and mute, per-app defaults. Defensive and bounded like settings.json."""
+    out = {"sink": "", "volume": None, "mute": None, "app_prefs": {}}
+    try:
+        with open(audio_state_file()) as f:
+            raw = json.load(f)
+        if isinstance(raw, dict):
+            if isinstance(raw.get("sink"), str) and len(raw["sink"]) <= 120:
+                out["sink"] = raw["sink"]
+            if isinstance(raw.get("volume"), (int, float)):
+                out["volume"] = max(0, min(150, int(raw["volume"])))
+            if isinstance(raw.get("mute"), bool):
+                out["mute"] = raw["mute"]
+            prefs = raw.get("app_prefs")
+            if isinstance(prefs, dict):
+                ap = {}
+                for k, v in list(prefs.items())[:50]:
+                    if not isinstance(k, str) or not k or len(k) > 120 or not isinstance(v, dict):
+                        continue
+                    e = {}
+                    if isinstance(v.get("volume"), (int, float)):
+                        e["volume"] = max(0, min(150, int(v["volume"])))
+                    if isinstance(v.get("mute"), bool):
+                        e["mute"] = v["mute"]
+                    if e:
+                        ap[k] = e
+                out["app_prefs"] = ap
+    except Exception:
+        pass
+    return out
+
+
+def save_audio_state(data):
+    """Persist audio preferences (never raises)."""
+    return _atomic_json(audio_state_file(), data)
+
+
 # ------------------------------------------------------------------ pins
 #
 # #64: pins grow named folders. File format v2 is

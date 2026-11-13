@@ -36,5 +36,22 @@ proxy, audio) are effectively kernel-bound.
 - Audio: one stream must sustain ≥ **140 KiB/s** (the PCM rate minus a
   small margin); 3 parallel streams must not starve HTTP scenarios.
 
+## Audio fan-out (#105, v2.5.0)
+
+Since v2.5.0 the encoded audio is produced **once per quality tier** and
+fanned out to every listener: one ffmpeg process serves 1, 3 or N
+concurrent clients with the same tier, so CPU grows by ~one socket
+write per listener instead of one encoder per listener. Slow listeners
+have bounded queues (4 MiB) and are dropped rather than allowed to
+stall the producer. `RD_AUDIO_SHARED=0` restores per-client capture for
+isolation. Measure the producer cost independently of PulseAudio with:
+
+```sh
+ffmpeg -f lavfi -i sine=frequency=440:duration=60 -c:a libopus -b:a 96k -f webm - > /dev/null
+```
+
+Numbers for the WebRTC alternative are in
+[ADR-0006](adr/ADR-0006-webrtc-media-transport.md).
+
 Numbers are runner-dependent; compare against a run on the same machine,
 not against this table.

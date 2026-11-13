@@ -626,8 +626,9 @@ def test_ready_reports_dependencies(server):
 
 
 def test_audio_raw_stream_opens(server):
-    # the audio route exists and answers 200 (bytes flow when PulseAudio +
-    # ffmpeg are present; empty stream otherwise). Raw socket so we can
+    # the audio route answers 200 with flowing bytes when PulseAudio +
+    # ffmpeg are present; without ffmpeg it must NOT answer 200-with-silence
+    # but 503 with an actionable error instead (#100). Raw socket so we can
     # bound the read of an endless stream.
     _, cookie = _login(server, ip="192.0.2.17")
     s = socket.create_connection(("127.0.0.1", server.port), timeout=10)
@@ -642,6 +643,21 @@ def test_audio_raw_stream_opens(server):
                 break
             head += c
         status = head.split(b"\r\n")[0]
+        if b"503" in status:
+            # the body may arrive in a later TCP segment than the header
+            # terminator; read to EOF (Connection: close) before asserting
+            body = head.split(b"\r\n\r\n", 1)[1] if b"\r\n\r\n" in head else b""
+            s.settimeout(3)
+            try:
+                while len(body) < 512:
+                    c = s.recv(4096)
+                    if not c:
+                        break
+                    body += c
+            except socket.timeout:
+                pass
+            assert b"audio capture unavailable" in body, body
+            return
         assert b"200" in status, status
         total = 0
         try:
