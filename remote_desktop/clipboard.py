@@ -157,8 +157,24 @@ def clipboard_set_image(item):
 
 def _ffmpeg_png_preview(path, width):
     rc, out, _ = _run_capture_bytes(
-        ["ffmpeg", "-loglevel", "error", "-i", path, "-vf", f"scale={width}:-2",
-         "-frames:v", "1", "-c:v", "mjpeg", "-q:v", "7", "-f", "image2", "-"],
+        [
+            "ffmpeg",
+            "-loglevel",
+            "error",
+            "-i",
+            path,
+            "-vf",
+            f"scale={width}:-2",
+            "-frames:v",
+            "1",
+            "-c:v",
+            "mjpeg",
+            "-q:v",
+            "7",
+            "-f",
+            "image2",
+            "-",
+        ],
         timeout=8,
     )
     return out if rc == 0 else b""
@@ -323,7 +339,7 @@ def _clip_load():
                 }
                 if entry["kind"] == "image":
                     entry["path"] = str(it.get("path") or "")[:400]
-                    entry["preview"] = str(it.get("preview") or "")[:CLIP_PREVIEW_MAX + 16]
+                    entry["preview"] = str(it.get("preview") or "")[: CLIP_PREVIEW_MAX + 16]
                     if it.get("skipped"):
                         entry["skipped"] = True
                     entry["len"] = int(it.get("len") or 0)

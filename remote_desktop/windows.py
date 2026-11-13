@@ -237,10 +237,24 @@ def window_thumbnail(hid):
         if w < 2 or h < 2:
             return None, "window too small to capture"
         cmd = [
-            "ffmpeg", "-loglevel", "error",
-            "-f", "x11grab", "-video_size", f"{w}x{h}", "-i", f"{config.ENV['DISPLAY']}+{x},{y}",
-            "-frames:v", "1", "-c:v", "mjpeg", "-q:v", "5",
-            "-f", "image2", "-",
+            "ffmpeg",
+            "-loglevel",
+            "error",
+            "-f",
+            "x11grab",
+            "-video_size",
+            f"{w}x{h}",
+            "-i",
+            f"{config.ENV['DISPLAY']}+{x},{y}",
+            "-frames:v",
+            "1",
+            "-c:v",
+            "mjpeg",
+            "-q:v",
+            "5",
+            "-f",
+            "image2",
+            "-",
         ]
         if w > THUMB_MAX_W:  # cap width, keep aspect
             cmd[9:9] = ["-vf", f"scale={THUMB_MAX_W}:-2"]
@@ -318,9 +332,7 @@ def _win_maximize(hid, on):
     fallback sized to the display (#60). The reply says which ran."""
     prop = "add" if on else "remove"
     if shutil.which("wmctrl"):
-        rc, _, err = procs._run(
-            ["wmctrl", "-ir", str(hid), "-b", f"{prop},maximized_vert,maximized_horz"], timeout=3
-        )
+        rc, _, err = procs._run(["wmctrl", "-ir", str(hid), "-b", f"{prop},maximized_vert,maximized_horz"], timeout=3)
         if rc == 0:
             return {"ok": True, "via": "ewmh"}
         return {"ok": False, "error": f"wmctrl maximize failed: {(err or 'unknown')[:120]}"}

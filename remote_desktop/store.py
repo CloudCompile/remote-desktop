@@ -228,10 +228,7 @@ def _persist_jobs():
         os.makedirs(JOB_DIR, exist_ok=True)
         with open(JOBS_FILE + ".tmp", "w") as f:
             json.dump(
-                [
-                    {k: v for k, v in j.items() if k not in ("proc",)}
-                    for j in list(_JOBS.values())[-20:]
-                ],
+                [{k: v for k, v in j.items() if k not in ("proc",)} for j in list(_JOBS.values())[-20:]],
                 f,
             )
         os.replace(JOBS_FILE + ".tmp", JOBS_FILE)
@@ -427,7 +424,7 @@ def install_status(pkg):
         job = _JOBS.get(pkg)
         state_now = job.get("state") if job else None
         pending = [j for j in _queue if j.get("state") == "queued" and j["pkg"] != pkg]
-        queue_pos = (next((i for i, j in enumerate(_queue) if j["pkg"] == pkg), None))
+        queue_pos = next((i for i, j in enumerate(_queue) if j["pkg"] == pkg), None)
         queue_pos = queue_pos + 1 if queue_pos is not None else None
     installing = bool(job) and state_now == "running" and time.time() - job.get("ts", 0) < JOB_TTL
     if installed and state_now in (None, "running", "queued"):

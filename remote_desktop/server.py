@@ -393,7 +393,9 @@ class Handler(http.BaseHandler):
                 return self._json(200 if r.get("ok") else 400, {"ok": r.get("ok", False), **r})
             if path == "/api/geometry":  # #76: toggle / reset per-app geometry remembering
                 d = self._body()
-                return self._json(200, {"ok": True, **windows.geometry_settings(d.get("enabled"), bool(d.get("reset")))})
+                return self._json(
+                    200, {"ok": True, **windows.geometry_settings(d.get("enabled"), bool(d.get("reset")))}
+                )
             if path == "/api/settings":  # #72/#76: opt-in toggles
                 d = self._body()
                 r = state.save_setting(str(d.get("key", "")), d.get("value"))
@@ -553,7 +555,9 @@ class Handler(http.BaseHandler):
                 r = apps.delete_custom_app(parse_qs(url.query).get("id", [""])[0])
                 return self._json(200 if r.get("ok") else 404, r)
             if path == "/api/pins/folder":  # #64: pins stay pinned under Unfiled
-                return self._json(200, {"ok": True, **state.pins_folder_delete(parse_qs(url.query).get("name", [""])[0])})
+                return self._json(
+                    200, {"ok": True, **state.pins_folder_delete(parse_qs(url.query).get("name", [""])[0])}
+                )
             return self._json(404, {"error": "not found"})
         except Exception as e:
             log.log(f"DELETE {path} error: {e}")
@@ -642,9 +646,7 @@ class Handler(http.BaseHandler):
             if not r.get("ok"):
                 return self._json(500, {"ok": False, "error": "could not set the X clipboard"})
             rc, _, err = procs._run(["xdotool", "key", "--clearmodifiers", "ctrl+v"], timeout=10)
-            return self._json(
-                200 if rc == 0 else 500, {"ok": rc == 0, "error": None if rc == 0 else err[:200]}
-            )
+            return self._json(200 if rc == 0 else 500, {"ok": rc == 0, "error": None if rc == 0 else err[:200]})
         # keys mode (default): type it out; very large text is refused with
         # an actionable alternative (#74)
         if len(text) > 5000:
@@ -657,9 +659,7 @@ class Handler(http.BaseHandler):
                 },
             )
         timeout = 15 + int(len(text) * 0.02)  # 12 ms per char + margin
-        rc, _, err = procs._run(
-            ["xdotool", "type", "--clearmodifiers", "--delay", "12", text], timeout=timeout
-        )
+        rc, _, err = procs._run(["xdotool", "type", "--clearmodifiers", "--delay", "12", text], timeout=timeout)
         return self._json(200 if rc == 0 else 500, {"ok": rc == 0, "error": None if rc == 0 else err[:200]})
 
     def _login(self):

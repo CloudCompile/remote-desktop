@@ -140,7 +140,9 @@ def test_preview_budget(clip_tmp, monkeypatch):
     big = bytes(range(256)) * 400  # ~100KB raw
     monkeypatch.setattr(cb, "CLIP_IMAGE_MAX", 10 * 1024 * 1024)
     monkeypatch.setattr(
-        cb, "_ffmpeg_png_preview", lambda path, width: b"\xff\xd8" + b"z" * (128 * 1024)  # always too big
+        cb,
+        "_ffmpeg_png_preview",
+        lambda path, width: b"\xff\xd8" + b"z" * (128 * 1024),  # always too big
     )
     item = cb.clip_add_image(big)
     assert len(item["preview"]) <= cb.CLIP_PREVIEW_MAX or item["preview"] == ""
@@ -148,7 +150,8 @@ def test_preview_budget(clip_tmp, monkeypatch):
 
 def test_uri_list_capture_deduped(clip_tmp, monkeypatch):
     monkeypatch.setattr(
-        cb, "_run_xclip",
+        cb,
+        "_run_xclip",
         lambda cmd, timeout=4: (
             (0, "file:///home/u/report.pdf", "")
             if "-t" in cmd and cmd[cmd.index("-t") + 1] == "text/uri-list"

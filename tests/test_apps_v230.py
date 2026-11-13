@@ -81,7 +81,9 @@ def test_flatpak_parsing(monkeypatch):
     monkeypatch.setattr(
         "remote_desktop.procs._run",
         lambda cmd, timeout=6, env=None: (
-            (0, "org.mozilla.firefox\tFirefox\tfirefox\norg.videolan.VLC\tVLC\tvlc\n", "") if cmd[0] == "flatpak" else (1, "", "")
+            (0, "org.mozilla.firefox\tFirefox\tfirefox\norg.videolan.VLC\tVLC\tvlc\n", "")
+            if cmd[0] == "flatpak"
+            else (1, "", "")
         ),
     )
     got = apps.list_flatpak_apps()
@@ -108,10 +110,25 @@ def test_missing_backends_skip_silently(no_backends):
 
 
 def test_dedupe_against_desktop(sdir, no_backends):
-    desktop = [{"id": "firefox.desktop", "name": "Firefox", "desc": "", "cmd": "firefox", "wmclass": "firefox",
-                "terminal": False, "categories": "", "source": "desktop"}]
+    desktop = [
+        {
+            "id": "firefox.desktop",
+            "name": "Firefox",
+            "desc": "",
+            "cmd": "firefox",
+            "wmclass": "firefox",
+            "terminal": False,
+            "categories": "",
+            "source": "desktop",
+        }
+    ]
     flatpak = [
-        {"id": "org.mozilla.firefox", "name": "Firefox", "wmclass": "firefox", "source": "flatpak"},  # dup by name+class
+        {
+            "id": "org.mozilla.firefox",
+            "name": "Firefox",
+            "wmclass": "firefox",
+            "source": "flatpak",
+        },  # dup by name+class
         {"id": "org.videolan.VLC", "name": "VLC", "wmclass": "vlc", "source": "flatpak"},  # kept
     ]
     merged = apps._dedupe({"desktop": desktop, "flatpak": flatpak, "snap": [], "custom": []})
@@ -149,8 +166,11 @@ class FakeX:
                     only, args = True, args[1:]
                 kind, pat = args[0], args[1]
                 field = {"--classname": "inst", "--class": "cls", "--name": "name"}[kind]
-                hit = [wid for wid, w in self.wins.items() if (not only or w.get("visible", True))
-                       and _re.search(pat, w[field])]
+                hit = [
+                    wid
+                    for wid, w in self.wins.items()
+                    if (not only or w.get("visible", True)) and _re.search(pat, w[field])
+                ]
                 return 0, "\n".join(hit), ""
             if cmd[1] == "getwindowgeometry":
                 w = self.wins[cmd[-1]]
@@ -170,10 +190,21 @@ def test_find_app_window_flatpak_id(monkeypatch):
     not launched twice."""
     monkeypatch.setattr(
         "remote_desktop.procs._run",
-        FakeX({"9001": dict(inst="org.mozilla.firefox", cls="org.mozilla.firefox", name="Firefox",
-                            x=0, y=0, w=800, h=600)}),
+        FakeX(
+            {
+                "9001": dict(
+                    inst="org.mozilla.firefox", cls="org.mozilla.firefox", name="Firefox", x=0, y=0, w=800, h=600
+                )
+            }
+        ),
     )
-    a = {"id": "org.mozilla.firefox", "name": "Firefox", "wmclass": "firefox", "source": "flatpak", "cmd": "flatpak run org.mozilla.firefox"}
+    a = {
+        "id": "org.mozilla.firefox",
+        "name": "Firefox",
+        "wmclass": "firefox",
+        "source": "flatpak",
+        "cmd": "flatpak run org.mozilla.firefox",
+    }
     assert apps.find_app_window(a) == "9001"
 
 
@@ -265,7 +296,9 @@ def test_launch_entry_records_and_hints(sdir, no_backends, monkeypatch):
     r = apps._launch_entry({"id": "ok-app.desktop", "name": "Ok", "cmd": "sleep 5", "source": "desktop"})
     assert r == {"ok": True}
     assert state.load_launches()[0]["id"] == "ok-app.desktop"
-    r = apps._launch_entry({"id": "bad-app.desktop", "name": "Bad", "cmd": "definitely-not-real-xyz", "source": "desktop"})
+    r = apps._launch_entry(
+        {"id": "bad-app.desktop", "name": "Bad", "cmd": "definitely-not-real-xyz", "source": "desktop"}
+    )
     assert r["ok"] is False and r["hint"] and r["cmd"]  # structured failure (#75)
     assert state.load_launches()[0]["id"] == "ok-app.desktop"  # failures not recorded
 

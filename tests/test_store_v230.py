@@ -45,7 +45,9 @@ def test_valid_pkg_name():
 def test_backend_detection_prefers_apt(monkeypatch):
     monkeypatch.setattr(store, "_BACKENDS", (store.AptBackend(), store.DnfBackend(), store.PacmanBackend()))
     store.reset_backend_cache()
-    monkeypatch.setattr("shutil.which", lambda name, path=None: "/usr/bin/" + name if name in ("apt-get", "dnf") else None)
+    monkeypatch.setattr(
+        "shutil.which", lambda name, path=None: "/usr/bin/" + name if name in ("apt-get", "dnf") else None
+    )
     info = store.backend_info()
     assert info["backend"] == "apt" and info["supported"] is True
     assert info["capabilities"]["install"] and info["capabilities"]["remove"]
@@ -128,7 +130,11 @@ def test_queue_position_reported(monkeypatch, fresh_queue):
 def test_install_status_log_tail(tmp_path, monkeypatch, fresh_queue):
     logf = tmp_path / "job.log"
     logf.write_text("".join(f"line{i}\n" for i in range(40)))
-    monkeypatch.setattr(store, "_JOBS", {"vlc": {"pkg": "vlc", "op": "install", "state": "running", "ts": time.time(), "log": str(logf)}})
+    monkeypatch.setattr(
+        store,
+        "_JOBS",
+        {"vlc": {"pkg": "vlc", "op": "install", "state": "running", "ts": time.time(), "log": str(logf)}},
+    )
     st = store.install_status("vlc")
     assert len(st["log"]) == store.LOG_TAIL_LINES
     assert st["log"][-1] == "line39"
@@ -167,7 +173,9 @@ def test_collections_shipped_and_filtered():
 def test_collections_override(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "STATE_DIR", str(tmp_path))
     (tmp_path / "collections.json").write_text(
-        json.dumps({"collections": [{"id": "mine", "label": "Mine", "apps": [{"pkg": "foo", "label": "Foo", "desc": ""}]}]})
+        json.dumps(
+            {"collections": [{"id": "mine", "label": "Mine", "apps": [{"pkg": "foo", "label": "Foo", "desc": ""}]}]}
+        )
     )
     cols = store.collections()
     assert len(cols) == 1 and cols[0]["id"] == "mine"
@@ -182,7 +190,10 @@ def test_collections_invalid_pkgs_dropped(tmp_path, monkeypatch):
                     {
                         "id": "x",
                         "label": "X",
-                        "apps": [{"pkg": "ok1", "label": "Ok", "desc": ""}, {"pkg": "../evil", "label": "Evil", "desc": ""}],
+                        "apps": [
+                            {"pkg": "ok1", "label": "Ok", "desc": ""},
+                            {"pkg": "../evil", "label": "Evil", "desc": ""},
+                        ],
                     }
                 ]
             }

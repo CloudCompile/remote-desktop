@@ -470,9 +470,7 @@ def find_app_window(a):
     # Wayland-native windows whose WM_CLASS is missing but whose title
     # carries the app name, #73); terminal apps get an exact -title
     if a.get("name"):
-        rc, out, _ = procs._run(
-            ["xdotool", "search", "--onlyvisible", "--name", "^" + re.escape(a["name"])]
-        )
+        rc, out, _ = procs._run(["xdotool", "search", "--onlyvisible", "--name", "^" + re.escape(a["name"])])
         if rc == 0 and out.strip():
             win = windows._pick_window(out.split(), chrome=is_chrome)
             if win:
