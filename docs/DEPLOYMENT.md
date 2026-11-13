@@ -151,3 +151,40 @@ root cause; per docs/RELEASING.md, tags are never rewritten.
 - [ ] VNC `-localhost yes`, no VNC password (auth is at HTTP layer)
 - [ ] Firewall blocks 5901/8090 from untrusted networks
 - [ ] Keep `.pins.json` / `.cliphistory.json` private (they contain user data)
+- [ ] Sandboxed units installed (#33) — see [systemd/README.md](../systemd/README.md)
+
+## Unit sandboxing (#33)
+
+The shipped units run with `NoNewPrivileges`, `PrivateTmp`,
+`ProtectSystem=full`, `ProtectHome=read-only` (with `ReadWritePaths` for
+`/opt/remote-desktop` and the XDG state dir), restricted address families
+and `LimitNOFILE`. Two deliberate trade-offs:
+
+- **App store installs**: the store runs `sudo apt-get install` in the
+  background, which `NoNewPrivileges` blocks. That is the documented sudo
+  exception — set `NoNewPrivileges=no` if you want in-UI installs, or keep
+  the sandbox and install packages over SSH.
+- **X11 socket**: the X socket lives in `/tmp/.X11-unix`; the control unit
+  binds that directory back into its private `/tmp` (`BindPaths`) so
+  `xdotool`/`xclip` keep working.
+
+Run `systemd-analyze security remote-control.service` to see the score;
+each directive and its relaxation is tabulated in
+[systemd/README.md](../systemd/README.md).
+
+## Graceful shutdown (#25)
+
+`SIGTERM`/`SIGINT` stop the listener, close websocket clients, terminate
+ffmpeg children (bounded wait) and persist the clipboard history before
+exit — inside the `TimeoutStopSec=10` the units set. A second signal
+forces an immediate exit. `systemctl stop remote-control` therefore exits
+cleanly and leaves no children behind.
+
+## Readiness vs liveness (#40)
+
+- `GET /api/health` — fast, dependency-free liveness (always cheap).
+- `GET /api/ready` — readiness: 200 only when X, VNC, PulseAudio and
+  ffmpeg are usable; 503 with a per-dependency reason otherwise. Probes
+  are cached for `RD_READY_CACHE` seconds and each has its own timeout.
+- Wire tunnels or supervisors to `/api/ready`; the UI surfaces the same
+  status by dependency name.

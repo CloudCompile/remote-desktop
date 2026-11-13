@@ -1,3 +1,5 @@
+# Cloudflare quick tunnel to the remote desktop. Sandboxed tightly —
+# cloudflared needs no filesystem or X access (#33).
 [Unit]
 Description=Cloudflare quick tunnel to the remote desktop
 After=network-online.target remote-control.service
@@ -11,6 +13,16 @@ Environment=PATH=/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/local/bin/cloudflared tunnel --url http://127.0.0.1:8090 --no-autoupdate
 Restart=always
 RestartSec=10
+TimeoutStopSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LimitNOFILE=8192
 
 [Install]
 WantedBy=multi-user.target

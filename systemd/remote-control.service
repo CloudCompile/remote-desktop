@@ -1,3 +1,9 @@
+# Control server: HTTP + websocket + audio on one port (127.0.0.1:8090).
+# Hardened per issue #33 — see docs/DEPLOYMENT.md for each directive's
+# trade-off and how to relax it.
+#
+# NOTE (X11): xdotool/xclip/xrandr talk to the X socket in /tmp/.X11-unix.
+# PrivateTmp would hide it, so it is bind-mounted back in below.
 [Unit]
 Description=Remote desktop control server (port 8090)
 After=network.target remote-session.service
@@ -12,8 +18,35 @@ Environment=RD_DISPLAY=:1
 Environment=VNC_HOST=127.0.0.1
 Environment=VNC_PORT=5901
 ExecStart=/usr/bin/python3 /opt/remote-desktop/control.py
-Restart=always
+Restart=on-failure
 RestartSec=3
+# graceful stop (#25): the server drains and reaps children well inside
+# 10s; a second SIGTERM forces an immediate exit
+TimeoutStopSec=10
+
+# ---- sandboxing (#33)
+NoNewPrivileges=yes
+# the app store runs `sudo apt-get install` in the background; with
+# NoNewPrivileges=yes those installs fail (documented exception: set
+# NoNewPrivileges=no, or install apps by other means). Everything else
+# works with it enabled.
+PrivateTmp=yes
+# the X11 socket lives in /tmp/.X11-unix — bind it back into the private tmp
+BindPaths=-/tmp/.X11-unix
+ProtectSystem=full
+ProtectHome=read-only
+# writable: the app directory (state files, vendored web assets) and the
+# XDG state dir (backups, display state). %h expands to the user's home.
+ReadWritePaths=/opt/remote-desktop %h/.local/share/remote-desktop
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+LimitNOFILE=8192
+# optional memory ceiling — uncomment and size for the deployment
+#MemoryMax=1G
 
 [Install]
 WantedBy=multi-user.target
