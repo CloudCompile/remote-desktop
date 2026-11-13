@@ -5,8 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Remote">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#161616">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/app/images/icons/novnc-152x152.png">
+<link rel="icon" href="/app/images/icons/novnc-32x32.png" type="image/png">
 <title>Remote Desktop</title>
 <style>
   :root{--it:0px;--ib:0px;--il:0px;--ir:0px;--accent:#2a6;--sheet:#161616}
@@ -298,6 +302,7 @@
       <button id="reconnectBtn">Reconnect</button>
       <button id="clipboardBtn">Paste to remote</button>
     </div>
+    <div class="row"><button id="installBtn" hidden>Install app on this device</button></div>
     <div class="row"><button id="logoutBtn">Log out</button></div>
     <div id="info"></div>
   </div>
@@ -1603,6 +1608,48 @@ setInterval(async () => {
     if (r.status === 401) location.href = '/login';
   } catch(_) {}
 }, 60000);
+
+/* ------------------------------------------------------------------ *
+ *  PWA: service worker + install prompt (#49)                         *
+ * ------------------------------------------------------------------ */
+// Register only on secure origins (https or localhost); plain-HTTP LAN
+// setups skip the worker and keep working exactly as before.
+if ('serviceWorker' in navigator &&
+    (window.isSecureContext || ['localhost', '127.0.0.1'].includes(location.hostname))) {
+  addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').then(reg => {
+      if (reg.waiting && navigator.serviceWorker.controller)
+        status('App update ready — reload to apply');
+      reg.addEventListener('updatefound', () => {
+        const sw = reg.installing;
+        if (!sw) return;
+        sw.addEventListener('statechange', () => {
+          if (sw.state === 'installed' && navigator.serviceWorker.controller)
+            status('App update ready — reload to apply');
+        });
+      });
+    }).catch(() => {});
+  });
+}
+let installEvent = null;
+addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  installEvent = e;
+  $('installBtn').hidden = false;
+});
+$('installBtn').addEventListener('click', async () => {
+  if (!installEvent) {
+    // iOS Safari has no install prompt: Add to Home Screen is manual
+    status('Use the browser menu — Share → Add to Home Screen (iOS)');
+    return;
+  }
+  try {
+    installEvent.prompt();
+    await installEvent.userChoice;
+  } catch (_) {}
+  installEvent = null;
+  $('installBtn').hidden = true;
+});
 
 applyInsets();
 connect();
