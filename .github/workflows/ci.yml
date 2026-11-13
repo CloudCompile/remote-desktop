@@ -81,3 +81,18 @@ jobs:
 
       - name: Coverage summary
         run: python3 -m coverage report --format=total 2>/dev/null || true
+
+  hooks:
+    # 38: pre-commit in check-only mode (ruff check + ruff format --check
+    # + whitespace). format is check-only: no reformats inside CI runs.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run pre-commit hooks
+        uses: pre-commit/action@v3.0.1
+

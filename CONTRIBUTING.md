@@ -8,9 +8,25 @@ that way where possible.
 ```sh
 git clone https://github.com/CloudCompile/remote-desktop.git
 cd remote-desktop
-python3 -m py_compile control.py
+python3 -m py_compile control.py remote_desktop/*.py
 sh -n session.sh start.sh webapps.sh tunnel-url.sh
 ```
+
+### pre-commit hooks (#38)
+
+Formatting and lint run through [ruff](https://docs.astral.sh/ruff/)
+(`ruff check` + `ruff format --check`, see `pyproject.toml`) and basic
+whitespace hooks:
+
+```sh
+pip install pre-commit
+pre-commit install          # run on every commit
+pre-commit run --all-files  # run on the whole tree
+```
+
+CI runs the same hooks in check-only mode. `ruff format` is intentionally
+check-only and excludes `scripts/check-links.py` (legacy, unformatted);
+don't reformat legacy files inside behaviour changes.
 
 To syntax-check the frontend's inline module, extract the `<script>` block
 and run `node --check` on it, or just open the page with the devtools

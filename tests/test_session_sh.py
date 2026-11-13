@@ -7,6 +7,7 @@ stale-pidfile takeover, start with the configured geometry/DPI, TERM
 forwarding that stops Xvnc/PulseAudio and cleans the pid file, --status,
 and RD_GEOMETRY / persisted display.json consumption.
 """
+
 import json
 import os
 import shutil
@@ -24,24 +25,32 @@ def sandbox(tmp_path):
     """Fake tool sandbox: bin/ with stubs, fake XDG state, marker files."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    marker = tmp_path / "listening"          # fake ss: exists == port listening
-    calls = tmp_path / "calls.log"           # every fake tool appends its argv
+    marker = tmp_path / "listening"  # fake ss: exists == port listening
+    calls = tmp_path / "calls.log"  # every fake tool appends its argv
 
     def stub(name, body):
         p = bin_dir / name
-        p.write_text("#!/bin/sh\n"
-                     f"echo \"$$(date '+%s') {name} $*\" >> '{calls}'\n" + body)
+        p.write_text(f"#!/bin/sh\necho \"$$(date '+%s') {name} $*\" >> '{calls}'\n" + body)
         os.chmod(p, 0o755)
 
-    stub("ss", f"""if [ -f "{marker}" ]; then echo "LISTEN 0 5 127.0.0.1:5977"; fi
-""")
-    stub("vncserver", f"""if [ "$1" = "-kill" ]; then rm -f "{marker}"; exit 0; fi
+    stub(
+        "ss",
+        f"""if [ -f "{marker}" ]; then echo "LISTEN 0 5 127.0.0.1:5977"; fi
+""",
+    )
+    stub(
+        "vncserver",
+        f"""if [ "$1" = "-kill" ]; then rm -f "{marker}"; exit 0; fi
 touch "{marker}"
 echo "$*" > '{tmp_path}/vnc-args'
 exit 0
-""")
-    stub("pactl", """if [ "$1" = "list" ]; then echo "remote_out\\tdummy"; else exit 0; fi
-""")
+""",
+    )
+    stub(
+        "pactl",
+        """if [ "$1" = "list" ]; then echo "remote_out\\tdummy"; else exit 0; fi
+""",
+    )
     stub("pulseaudio", "exit 0\n")
     stub("xrandr", "exit 0\n")
 
@@ -49,9 +58,15 @@ exit 0
     os.makedirs(xdg / "remote-desktop", exist_ok=True)
     rundir = tmp_path / "run"
     rundir.mkdir()
-    return {"bin": bin_dir, "marker": marker, "calls": calls, "xdg": xdg,
-            "rundir": rundir, "log": tmp_path / "watchdog.log",
-            "vncargs": tmp_path / "vnc-args"}
+    return {
+        "bin": bin_dir,
+        "marker": marker,
+        "calls": calls,
+        "xdg": xdg,
+        "rundir": rundir,
+        "log": tmp_path / "watchdog.log",
+        "vncargs": tmp_path / "vnc-args",
+    }
 
 
 def _start(sb, tmp_path, env_extra=None):
@@ -63,8 +78,7 @@ def _start(sb, tmp_path, env_extra=None):
     env["XDG_DATA_HOME"] = str(sb["xdg"])
     env["XDG_RUNTIME_DIR"] = str(sb["rundir"])
     env.update(env_extra or {})
-    return subprocess.Popen(["/bin/sh", SESSION_SH], env=env,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return subprocess.Popen(["/bin/sh", SESSION_SH], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def _wait_log(sb, needle, timeout=15):
@@ -89,10 +103,12 @@ def test_start_status_and_term_lifecycle(sandbox, tmp_path):
         # pid file exists and --status reports the watchdog
         pidfile = sandbox["rundir"] / "remote-session77.pid"
         assert pidfile.exists()
-        r = subprocess.run(["/bin/sh", SESSION_SH, "--status"],
-                           env={**os.environ, "RD_DISPLAY": ":77",
-                                "XDG_RUNTIME_DIR": str(sandbox["rundir"])},
-                           capture_output=True, text=True)
+        r = subprocess.run(
+            ["/bin/sh", SESSION_SH, "--status"],
+            env={**os.environ, "RD_DISPLAY": ":77", "XDG_RUNTIME_DIR": str(sandbox["rundir"])},
+            capture_output=True,
+            text=True,
+        )
         assert r.returncode == 0 and "running" in r.stdout
         # a second watchdog must refuse to take over the same display
         dup = _start(sandbox, tmp_path)
@@ -130,8 +146,7 @@ def test_rd_geometry_and_dpi_used(sandbox, tmp_path):
 
 
 def test_persisted_display_state_used(sandbox, tmp_path):
-    (sandbox["xdg"] / "remote-desktop" / "display.json").write_text(
-        json.dumps({"geometry": "1920x1080", "dpi": 144}))
+    (sandbox["xdg"] / "remote-desktop" / "display.json").write_text(json.dumps({"geometry": "1920x1080", "dpi": 144}))
     proc = _start(sandbox, tmp_path)
     try:
         assert _wait_log(sandbox, "event=vnc-start-done")
@@ -144,7 +159,7 @@ def test_persisted_display_state_used(sandbox, tmp_path):
 
 def test_stale_pidfile_is_taken_over(sandbox, tmp_path):
     pidfile = sandbox["rundir"] / "remote-session77.pid"
-    pidfile.write_text("4194300\n")             # assume no such process
+    pidfile.write_text("4194300\n")  # assume no such process
     proc = _start(sandbox, tmp_path)
     try:
         assert _wait_log(sandbox, "event=stale-pidfile")
@@ -155,16 +170,19 @@ def test_stale_pidfile_is_taken_over(sandbox, tmp_path):
 
 
 def test_status_stopped(sandbox):
-    r = subprocess.run(["/bin/sh", SESSION_SH, "--status"],
-                       env={**os.environ, "RD_DISPLAY": ":77",
-                            "XDG_RUNTIME_DIR": str(sandbox["rundir"])},
-                       capture_output=True, text=True)
+    r = subprocess.run(
+        ["/bin/sh", SESSION_SH, "--status"],
+        env={**os.environ, "RD_DISPLAY": ":77", "XDG_RUNTIME_DIR": str(sandbox["rundir"])},
+        capture_output=True,
+        text=True,
+    )
     assert r.returncode == 1
     assert "stopped" in r.stdout
 
 
 def test_sh_syntax():
     for script in ("session.sh", "start.sh", "webapps.sh", "tunnel-url.sh"):
-        r = subprocess.run(["sh", "-n", os.path.join(os.path.dirname(SESSION_SH), script)],
-                           capture_output=True, text=True)
+        r = subprocess.run(
+            ["sh", "-n", os.path.join(os.path.dirname(SESSION_SH), script)], capture_output=True, text=True
+        )
         assert r.returncode == 0, r.stderr

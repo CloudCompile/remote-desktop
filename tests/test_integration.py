@@ -632,8 +632,7 @@ def test_audio_raw_stream_opens(server):
     _, cookie = _login(server, ip="192.0.2.17")
     s = socket.create_connection(("127.0.0.1", server.port), timeout=10)
     try:
-        req = (f"GET /api/audio.raw HTTP/1.1\r\nHost: x\r\n"
-               f"Cookie: {cookie}\r\nConnection: close\r\n\r\n")
+        req = f"GET /api/audio.raw HTTP/1.1\r\nHost: x\r\nCookie: {cookie}\r\nConnection: close\r\n\r\n"
         s.sendall(req.encode())
         s.settimeout(8)
         head = b""
