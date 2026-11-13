@@ -5,12 +5,17 @@ resolving icons, and launch-or-focus behaviour (window matching lives in
 windows.py). Nothing here starts threads at import time (#22).
 """
 
+import hashlib
+import json
 import os
 import re
 import shutil
+import subprocess
+import tempfile
 import threading
+import time
 
-from . import config, procs, store, windows
+from . import config, procs, state, store, windows
 
 APP_CATALOG = [
     {
@@ -107,12 +112,13 @@ def list_desktop_apps():
                     "terminal": data.get("Terminal", "false").lower() in ("true", "1"),
                     "categories": data.get("Categories", ""),
                     "wmclass": wmclass or base_id or os.path.basename(exe_name),
+                    "source": "desktop",  # #65: merged lists carry their origin
                 }
             )
             seen.add(fn)
     for fb in FALLBACK_APPS:
         if not any(fb["cmd"] in a["cmd"] for a in apps):
-            apps.append(dict(fb))
+            apps.append({**fb, "source": "desktop"})
     apps.sort(key=lambda a: a["name"].lower())
     return apps
 
@@ -133,6 +139,283 @@ def _shared_webapp_hosts():
     return {h for h, n in hosts.items() if n > 1}
 
 
+def list_flatpak_apps():
+    """Installed Flatpak apps (#65). Missing backend -> empty list, no error."""
+    if not shutil.which("flatpak"):
+        return []
+    rc, out, _ = procs._run(["flatpak", "list", "--app", "--columns=application,name,icon"], timeout=20)
+    apps = []
+    if rc != 0 or not out.strip():
+        return apps
+    for line in out.splitlines():
+        cols = [c.strip() for c in line.split("\t")]
+        if not cols or not cols[0]:
+            continue
+        app_id = cols[0]
+        name = cols[1] if len(cols) > 1 and cols[1] else app_id
+        icon = cols[2] if len(cols) > 2 else ""
+        apps.append(
+            {
+                "id": app_id,
+                "name": name,
+                "desc": "Flatpak app",
+                "cmd": f"flatpak run {app_id}",
+                "terminal": False,
+                "categories": "",
+                # WM_CLASS is usually the flatpak id or its last component (#73)
+                "wmclass": app_id.rsplit(".", 1)[-1] if "." in app_id else app_id,
+                "icon": icon,
+                "source": "flatpak",
+            }
+        )
+    return apps
+
+
+def list_snap_apps():
+    """Installed Snap apps (#65). Missing backend -> empty list, no error."""
+    if not shutil.which("snap"):
+        return []
+    rc, out, _ = procs._run(["snap", "list"], timeout=20)
+    apps = []
+    if rc != 0 or not out.strip():
+        return apps
+    lines = out.strip().splitlines()[1:]  # header: Name Version Rev ...
+    for line in lines:
+        cols = line.split()
+        if not cols or cols[0] in ("core", "snapd", "bare") or cols[0].endswith("-kernel"):
+            continue
+        name = cols[0]
+        apps.append(
+            {
+                "id": name,
+                "name": name.capitalize(),
+                "desc": "Snap app",
+                "cmd": f"snap run {name}",
+                "terminal": False,
+                "categories": "",
+                # snap WM_CLASS is usually the snap name (capitalized variant too, #73)
+                "wmclass": name,
+                "source": "snap",
+            }
+        )
+    return apps
+
+
+# ------------------------------------------------------------- custom apps
+# #63: user-defined entries; commands are argv VECTORS launched without a
+# shell — validation here is the security boundary.
+
+
+CUSTOM_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,59}")
+
+
+def validate_custom_app(data):
+    """Validate a custom app entry. Returns (entry, None) or (None, error)."""
+    if not isinstance(data, dict):
+        return None, "body must be an object"
+    label = str(data.get("label") or "").strip()
+    if not label or len(label) > 60:
+        return None, "label must be 1-60 characters"
+    cmd = data.get("cmd")
+    if not isinstance(cmd, list) or not (1 <= len(cmd) <= 8):
+        return None, "cmd must be an array of 1-8 strings"
+    clean = []
+    for c in cmd:
+        if not isinstance(c, str) or not c.strip() or len(c) > 200:
+            return None, "each cmd entry must be a non-empty string of at most 200 characters"
+        if "\x00" in c or "\n" in c or "\r" in c:
+            return None, "cmd entries may not contain control characters"
+        clean.append(c.strip())
+    # never interpolate into a shell (#63 acceptance): entries launch as an
+    # argv vector via execvp — there is no shell to escape out of.
+    entry = {
+        "id": "",
+        "label": label,
+        "cmd": clean,
+        "desc": str(data.get("desc") or "").strip()[:120],
+        "wmclass": str(data.get("wmclass") or "").strip()[:60],  # "binds to window" override (#73)
+        "icon": str(data.get("icon") or "").strip()[:200],
+        "terminal": bool(data.get("terminal")),
+        "source": "custom",
+    }
+    app_id = str(data.get("id") or "").strip()
+    if app_id:
+        if not CUSTOM_ID_RE.fullmatch(app_id):
+            return None, "id must be 1-60 characters: letters, digits, space, dot, underscore, dash"
+        entry["id"] = app_id
+    else:
+        slug = re.sub(r"[^A-Za-z0-9._-]", "-", label)[:40].strip("-") or "app"
+        entry["id"] = f"{slug}-{hashlib.sha1(json.dumps(clean).encode()).hexdigest()[:6]}"
+    return entry, None
+
+
+def list_custom_apps():
+    return state.load_custom_apps()
+
+
+def add_custom_app(data):
+    entry, err = validate_custom_app(data)
+    if err:
+        return {"ok": False, "error": err}
+    entries = state.load_custom_apps()
+    if len(entries) >= state.CUSTOM_APPS_MAX:
+        return {"ok": False, "error": f"too many custom apps (max {state.CUSTOM_APPS_MAX})"}
+    if any(e.get("id") == entry["id"] for e in entries):
+        # same id = replace (edit), so the editor can update entries
+        entries = [e for e in entries if e.get("id") != entry["id"]]
+    entries.append(entry)
+    state.save_custom_apps(entries)
+    return {"ok": True, "app": entry}
+
+
+def delete_custom_app(app_id):
+    entries = state.load_custom_apps()
+    kept = [e for e in entries if e.get("id") != app_id]
+    if len(kept) == len(entries):
+        return {"ok": False, "error": "no such custom app"}
+    state.save_custom_apps(kept)
+    return {"ok": True}
+
+
+# --------------------------------------------------------------- merged list
+# /api/apps (#62 #63 #65 #77): every source merged, deduped against the
+# .desktop list, sorted pinned -> recently launched -> name, served with an
+# ETag so warm responses skip the scan entirely.
+
+
+def _dedupe(sources):
+    """Merge app lists; flatpak/snap entries that shadow a .desktop entry
+    (same name or WM_CLASS) are dropped (#65). Custom entries always win
+    over discovered ones with the same id."""
+    desktop = [dict(a, source="desktop") for a in sources.get("desktop", [])]
+    names = {a["name"].strip().lower() for a in desktop}
+    classes = {a["wmclass"].strip().lower() for a in desktop if a.get("wmclass")}
+    merged = list(desktop)
+    for src in ("flatpak", "snap"):
+        for a in sources.get(src, []):
+            nm = a["name"].strip().lower()
+            wm = (a.get("wmclass") or "").strip().lower()
+            if nm in names or (wm and wm in classes):
+                continue  # already discoverable as a .desktop entry
+            merged.append(a)
+            names.add(nm)
+            if wm:
+                classes.add(wm)
+    for a in sources.get("custom", []):
+        merged = [x for x in merged if x.get("id") != a["id"]]
+        merged.append(a)
+    return merged
+
+
+def _rank(apps):
+    """pinned (pin order) -> launched within 7 days (newest first) -> name (#62)."""
+    pin_pos = {pid: i for i, pid in enumerate(state.load_pins())}
+    recents = state.recent_launches()
+
+    def key(a):
+        aid = a["id"]
+        pin = pin_pos.get(aid)
+        ts = recents.get(aid)
+        if pin is not None:
+            return (0, pin, 0, a["name"].lower())
+        if ts is not None:
+            return (1, -ts, 0, a["name"].lower())
+        return (2, 0, 0, a["name"].lower())
+
+    return sorted(apps, key=key)
+
+
+def all_apps():
+    return _rank(
+        _dedupe(
+            {
+                "desktop": list_desktop_apps(),
+                "flatpak": list_flatpak_apps(),
+                "snap": list_snap_apps(),
+                "custom": list_custom_apps(),
+            }
+        )
+    )
+
+
+_apps_cache = {"fp": None, "etag": None, "body": b""}
+
+
+def _fingerprint():
+    """Cheap change detector for /api/apps (#77): directory mtimes + entry
+    counts + every state file the ranking depends on. One listdir per dir —
+    no .desktop parsing, no icon globbing."""
+    parts = []
+    for d in APP_DIRS:
+        try:
+            st = os.stat(d)
+            parts.append(f"{d}:{int(st.st_mtime)}:{len(os.listdir(d))}")
+        except OSError:
+            parts.append(f"{d}:missing")
+    for tool in ("flatpak", "snap"):
+        parts.append(f"{tool}:{1 if shutil.which(tool) else 0}")
+    for p in (state.custom_apps_file(), state.PINS_FILE, state.launch_history_file()):
+        try:
+            parts.append(f"{p}:{int(os.stat(p).st_mtime)}")
+        except OSError:
+            parts.append(f"{p}:missing")
+    return "|".join(parts)
+
+
+def apps_response():
+    """Serialized {"apps": [...]} body + ETag; cached until the
+    fingerprint changes (#77). Returns (body, etag)."""
+    fp = _fingerprint()
+    if _apps_cache["etag"] and _apps_cache["fp"] == fp:
+        return _apps_cache["body"], _apps_cache["etag"]
+    merged = all_apps()
+    body = json.dumps({"apps": merged}).encode()
+    etag = '"apps-' + hashlib.sha1(fp.encode() + str(len(merged)).encode()).hexdigest()[:16] + '"'
+    _apps_cache.update({"fp": fp, "etag": etag, "body": body})
+    return body, etag
+
+
+def find_app_entry(app_id):
+    """Any-source lookup by id (desktop file, flatpak id, snap name, custom)."""
+    for a in all_apps():
+        if a["id"] == app_id:
+            return a
+    return None
+
+
+# ---------------------------------------------------------- focus matching
+# #73: WM_CLASS/title heuristics for Flatpak (WM_CLASS often equals the
+# flatpak id), Snap and Wayland-window titles. Pure functions over faked
+# xdotool output in the tests — no X needed.
+
+
+def _wmclass_candidates(a):
+    """WM_CLASS strings to try for an app entry, most specific first (#73)."""
+    out, seen = [], set()
+
+    def add(v):
+        v = (v or "").strip()
+        if v and v not in seen:
+            seen.add(v)
+            out.append(v)
+
+    add(a.get("wmclass"))  # user override / StartupWMClass wins
+    if a.get("source") in ("flatpak", "snap"):
+        # flatpak ids (org.mozilla.Firefox): WM_CLASS is often the id itself
+        # or its last component; snap classes usually capitalize the name
+        for raw in (a.get("id") or "", a.get("flatpak_id") or ""):
+            if not raw:
+                continue
+            add(raw)
+            last = raw.rsplit(".", 1)[-1]
+            add(last)
+            add(last.capitalize())
+    if a.get("name"):
+        add(a["name"])
+        add(a["name"].split()[0].capitalize())  # "Firefox Web Browser" -> Firefox
+    return out
+
+
 def find_app_window(a):
     """Find an existing window belonging to app entry a. Returns window id or None."""
     cmd = a.get("cmd") or ""
@@ -151,15 +434,12 @@ def find_app_window(a):
             cands.append(("classname", host))
         # web app titles end with " - {App name}", they don't start with it
         cands.append(("name", re.escape(" - " + a["name"]) + "$"))
-    elif a.get("wmclass"):
-        # Prefer the WM_CLASS *instance* (xdotool --classname): Chrome's normal
-        # browser window is ("google-chrome", "Google-chrome"), but every
-        # --app window shares the class "Google-chrome" with instance set to
-        # the site host ("www.reddit.com", "x.com", ...). Matching on the
-        # class alone would focus whichever app window came first (Reddit,
-        # Instagram, ...) instead of the Chrome window the user clicked.
-        cands.append(("classname", re.escape(a["wmclass"])))
-        cands.append(("class", a["wmclass"]))
+    else:
+        # #73: packaged apps — every WM_CLASS variant (flatpak id, snap
+        # capitalisation, custom "binds to window" override), instance first
+        for v in _wmclass_candidates(a):
+            cands.append(("classname", re.escape(v)))
+            cands.append(("class", v))
     # visible windows first
     for kind, pat in cands:
         rc, out, _ = procs._run(["xdotool", "search", "--onlyvisible", "--" + kind, pat])
@@ -167,10 +447,13 @@ def find_app_window(a):
             win = windows._pick_window(out.split(), chrome=is_chrome)
             if win:
                 return win
-    # fallback: apps whose titles do start with their name; terminal apps
-    # get an exact -title
-    if is_web or a.get("terminal"):
-        rc, out, _ = procs._run(["xdotool", "search", "--onlyvisible", "--name", "^" + re.escape(a["name"])])
+    # fallback: apps whose titles do start with their name (also covers
+    # Wayland-native windows whose WM_CLASS is missing but whose title
+    # carries the app name, #73); terminal apps get an exact -title
+    if a.get("name"):
+        rc, out, _ = procs._run(
+            ["xdotool", "search", "--onlyvisible", "--name", "^" + re.escape(a["name"])]
+        )
         if rc == 0 and out.strip():
             win = windows._pick_window(out.split(), chrome=is_chrome)
             if win:
@@ -186,24 +469,129 @@ def find_app_window(a):
     return None
 
 
+def app_is_running(a):
+    """Best-effort process match (#73): is the app's binary running even
+    though no window matched? Used to avoid duplicate launches of
+    single-instance packaged apps."""
+    cmd = (a.get("cmd") or "").split()
+    if not cmd:
+        return False
+    # match the actual binary (skip wrappers like flatpak/snap run)
+    exe = cmd[-1] if cmd[0] in ("flatpak", "snap") else cmd[0]
+    exe = os.path.basename(exe)
+    if not re.fullmatch(r"[A-Za-z0-9._+-]{1,64}", exe):
+        return False
+    rc, out, _ = procs._run(["pgrep", "-f", exe], timeout=3)
+    return rc == 0 and bool(out.strip())
+
+
+# ------------------------------------------------------------ launching
+# #75: launches capture the child's early exit (first seconds) and return
+# structured errors with actionable hints; a slow-starting GUI is NOT a
+# failure. #62: successful launches are recorded for the ranking.
+
+LAUNCH_PROBE_SECONDS = 2.0
+
+
+def _launch_hint(rc, err, cmd):
+    """Actionable remediation for a failed launch (#75)."""
+    low = (err or "").lower()
+    if "cannot open display" in low or "cannot connect to x server" in low or "authorization required" in low:
+        return "could not connect to the display — is the desktop session running?"
+    if "command not found" in low or "no such file or directory" in low:
+        return f"'{os.path.basename(cmd[0])}' is not installed — try the Store"
+    if rc:
+        return f"the app exited immediately (exit code {rc}) — check its command line"
+    return "the app exited immediately — check its command line"
+
+
+def launch_process(cmd):
+    """Launch an argv vector (never a shell) and watch the first seconds
+    (#75). Returns {"ok": True} while the child keeps running, or
+    {"ok": False, "error", "hint"} when it exits early."""
+    try:
+        with tempfile.TemporaryFile() as errf:
+            try:
+                p = subprocess.Popen(
+                    cmd, env=config._pa_env(), stdout=subprocess.DEVNULL, stderr=errf, start_new_session=True
+                )
+            except FileNotFoundError:
+                exe = os.path.basename(cmd[0]) if cmd else "?"
+                return {
+                    "ok": False,
+                    "error": "missing binary",
+                    "hint": f"'{exe}' is not installed — try the Store",
+                }
+            except PermissionError:
+                return {"ok": False, "error": "not executable", "hint": f"'{cmd[0]}' is not executable"}
+            time.sleep(LAUNCH_PROBE_SECONDS)
+            rc = p.poll()
+            if rc is None:
+                return {"ok": True}  # still running: a slow-starting GUI, not a failure
+            errf.seek(0)
+            err = errf.read().decode(errors="replace")[:400]
+            return {"ok": False, "error": f"exit code {rc}", "hint": _launch_hint(rc, err, cmd)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200], "hint": "could not start the app"}
+
+
+def _after_launch(a):
+    """Post-launch: fit or restore geometry in the background (#76)."""
+    settings = state.load_settings()
+    if settings.get("geo_remember", True) and a.get("wmclass"):
+
+        def _restore():
+            if not windows.restore_after_launch(a["wmclass"], tries=15):
+                windows.fit_after_launch(tries=15)
+
+        threading.Thread(target=_restore, daemon=True).start()
+    else:
+        threading.Thread(target=windows.fit_after_launch, daemon=True).start()
+
+
 def launch_desktop(app_id):
-    """Launch an app by .desktop id (as returned by /api/apps).
-    If the app already has a window, focus/restore it instead of launching a
-    duplicate."""
-    for a in list_desktop_apps():
-        if a["id"] == app_id:
-            win = find_app_window(a)
-            if win:
-                windows._activate_window(win)
-                return {"ok": True, "focused": True}
-            if a["terminal"]:
-                procs.run_detached(["xterm", "-title", a["name"], "-e", "sh", "-c", a["cmd"]])
-            else:
-                procs.run_detached(["sh", "-c", a["cmd"]])
-            threading.Thread(target=windows.fit_after_launch, daemon=True).start()
-            return {"ok": True}
+    """Launch an app by id (as returned by /api/apps): a .desktop entry, a
+    Flatpak id, a Snap name or a custom entry. If the app already has a
+    window, focus/restore it instead of launching a duplicate."""
+    a = find_app_entry(app_id)
+    if a:
+        win = find_app_window(a)
+        if win:
+            windows._activate_window(win)
+            return {"ok": True, "focused": True}
+        # #73: packaged apps are single-instance — if the process is alive
+        # without a window (tray apps), never launch a duplicate.
+        if a.get("source") in ("flatpak", "snap") and app_is_running(a):
+            return {"ok": True, "focused": False, "running": True}
+        return _launch_entry(a)
     # also accept catalog names / bare commands for compatibility
     return self_launch_name(app_id)
+
+
+def _launch_entry(a):
+    """Start an app entry (any source), report structured failures (#75).
+
+    .desktop Exec strings keep their historical `sh -c` launch (the file is
+    part of the scanned system); custom/flatpak/snap entries are argv
+    vectors exec'd directly — user input never reaches a shell (#63)."""
+    raw = a.get("cmd")
+    if isinstance(raw, str):  # .desktop Exec string
+        if not raw.strip():
+            return {"ok": False, "error": "empty command", "hint": "the app entry has no launch command"}
+        cmd = ["xterm", "-title", a["name"], "-e", "sh", "-c", raw] if a.get("terminal") else ["sh", "-c", raw]
+    else:  # argv vector (custom / flatpak / snap): no shell, ever (#63)
+        cmd = list(raw or [])
+        if not cmd:
+            return {"ok": False, "error": "empty command", "hint": "the app entry has no launch command"}
+        if a.get("terminal"):
+            cmd = ["xterm", "-title", a["name"], "-e", *cmd]
+    r = launch_process(cmd)
+    if not r.get("ok"):
+        r["cmd"] = " ".join(cmd)
+        return r
+    state.record_launch(a["id"])
+    _after_launch(a)
+    return {"ok": True}
 
 
 def self_launch_name(name):
@@ -212,27 +600,56 @@ def self_launch_name(name):
     app = next((a for a in APP_CATALOG if a["name"] == name), None)
     if app:
         if not store.is_installed(app["pkg"]):
-            return {"ok": False, "error": "not installed"}
-        procs.run_detached(app["cmd"])
-        threading.Thread(target=windows.fit_after_launch, daemon=True).start()
-        return {"ok": True}
+            # #75: actionable, not a dead end
+            return {
+                "ok": False,
+                "error": "not installed",
+                "hint": f"'{app['pkg']}' is not installed — try the Store",
+                "cmd": app["pkg"],
+            }
+        r = launch_process(app["cmd"])
+        if r.get("ok"):
+            state.record_launch(name)
+            threading.Thread(target=windows.fit_after_launch, daemon=True).start()
+        else:
+            r["cmd"] = " ".join(app["cmd"])
+        return r
     exe = shutil.which(name, path=config._env().get("PATH"))
     if not exe:
-        return {"ok": False, "error": "no executable"}
-    procs.run_detached([exe])
-    return {"ok": True}
+        return {
+            "ok": False,
+            "error": "no executable",
+            "hint": f"'{name}' is not installed — try the Store",
+            "cmd": name,
+        }
+    r = launch_process([exe])
+    if r.get("ok"):
+        state.record_launch(name)
+    else:
+        r["cmd"] = exe
+    return r
 
 
 def find_icon(name):
-    """Resolve an Icon= value to a real image file (theme-aware, png preferred)."""
+    """Resolve an Icon= value to a real image file (theme-aware, png preferred).
+    Includes the Flatpak/Snap export dirs (#65)."""
     if not name:
         return None
     if name.startswith("/"):  # absolute path in the .desktop
         return name if os.path.isfile(name) else None
     import glob
 
+    exports = [  # flatpak/snap expose icons through their own exports (#65)
+        os.path.expanduser("~/.local/share/flatpak/exports/share/icons/hicolor"),
+        "/var/lib/flatpak/exports/share/icons/hicolor",
+        "/var/lib/snapd/desktop/icons/hicolor",
+    ]
     patterns = []
-    for base in (os.path.expanduser("~/.local/share/icons/hicolor"), "/usr/share/icons/hicolor"):
+    for base in (
+        os.path.expanduser("~/.local/share/icons/hicolor"),
+        "/usr/share/icons/hicolor",
+        *exports,
+    ):
         for sz in ("128x128", "96x96", "64x64", "72x72", "48x48", "256x256", "scalable"):
             patterns.append(f"{base}/{sz}/apps/{name}.png")
             patterns.append(f"{base}/{sz}/apps/{name}.svg")
@@ -250,9 +667,16 @@ def find_icon(name):
 
 
 def icon_path_for_app(app_id):
-    """Desktop id ('org.gnome.Nautilus.desktop') -> resolved icon file."""
+    """App id (as returned by /api/apps) -> resolved icon file. Handles
+    .desktop ids, custom entries with an Icon=/path (#63) and flatpak ids (#65)."""
     if not re.fullmatch(r"[A-Za-z0-9._\-]+", app_id or ""):
         return None
+    for e in list_custom_apps():  # #63: custom entries may name an icon/path
+        if e.get("id") == app_id:
+            icon = e.get("icon") or ""
+            if icon and os.path.isfile(icon):
+                return icon
+            return find_icon(icon) if icon else None
     for d in APP_DIRS:
         p = os.path.join(d, app_id)
         if os.path.isfile(p):
@@ -260,4 +684,7 @@ def icon_path_for_app(app_id):
             if data:
                 return find_icon(data.get("Icon", "").strip())
             return None
+    # flatpak ids resolve through the hicolor exports (#65)
+    if "." in app_id:
+        return find_icon(app_id)
     return None
