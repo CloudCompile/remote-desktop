@@ -242,7 +242,7 @@
     <button id="bApps" aria-label="Apps"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg><span data-i18n="bar.apps">Apps</span></button>
     <button id="bStore" aria-label="App store"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18a2 2 0 100 4 2 2 0 000-4zm10 0a2 2 0 100 4 2 2 0 000-4zM7.2 14h9.6c.75 0 1.4-.4 1.7-1.1l3.3-6.9-1.8-.9L16.8 12H7.3L4.3 4H1v2h2l3.6 7.6-1.4 2.5C4.5 17.4 5.5 19 7 19h12v-2H7.2l1-2z"/></svg><span data-i18n="bar.store">Store</span></button>
     <button id="bKeys" aria-label="Keyboard"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 6v12h20V6H2zm18 10h-6v-2h6v2zM4 8h3v2H4V8zm4 0h3v2H8V8zm4 0h3v2h-3V8zm4 0h3v2h-3V8zM4 12h3v2H4v-2zm4 0h11v2H8v-2z"/></svg><span data-i18n="bar.keys">Keys</span></button>
-    <button id="bTouch" aria-label="Toggle direct touch" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11.2V6a1.8 1.8 0 013.6 0v5l1.3.3 4.4 1.5a2 2 0 011.3 2.3l-.8 3.7a2 2 0 01-2 1.6h-5.1a2 2 0 01-1.4-.6L6 15.4a1.6 1.6 0 012.2-2.3l.8.6V11.2z"/></svg><span data-i18n="bar.touch">Touch</span></button>
+    <button id="bTouch" aria-pressed="false" data-i18n-aria="bar.touch" aria-label="Touch"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11.2V6a1.8 1.8 0 013.6 0v5l1.3.3 4.4 1.5a2 2 0 011.3 2.3l-.8 3.7a2 2 0 01-2 1.6h-5.1a2 2 0 01-1.4-.6L6 15.4a1.6 1.6 0 012.2-2.3l.8.6V11.2z"/></svg><span data-i18n="bar.touch">Touch</span></button>
     <button id="bAudio" aria-label="Audio"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0014 8v8a4.5 4.5 0 002.5 4 4.5 4.5 0 000-8z"/></svg><span data-i18n="bar.audio">Audio</span></button>
     <button id="bFiles" aria-label="Files"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg><span data-i18n="bar.files">Files</span></button>
     <button id="bFull" aria-label="Fullscreen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v2H6v4H4V4zm10 0h6v6h-2V6h-4V4zM4 14h2v4h4v2H4v-6zm14 0h2v6h-6v-2h4v-6z"/></svg><span data-i18n="bar.full">Full</span></button>
@@ -254,25 +254,25 @@
   <div class="sheet" id="shApps" role="dialog" aria-modal="true" aria-label="Apps">
     <h3 data-i18n="sheet.apps">Apps</h3>
     <div class="row">
-      <input type="text" id="appSearch" placeholder="Filter apps…" enterkeyhint="search">
+      <input type="text" id="appSearch" placeholder="Filter apps…" data-i18n-ph="apps.filterPh" enterkeyhint="search" aria-label="Filter apps">
     </div>
     <div class="chips" id="appChips"></div>
     <div id="appBody"></div>
-    <div class="row"><button class="primary" id="fitBtn">Fit windows to screen</button></div>
+    <div class="row"><button class="primary" id="fitBtn" data-i18n="apps.fit">Fit windows to screen</button></div>
   </div>
 
   <div class="sheet" id="shStore" role="dialog" aria-modal="true" aria-label="App store">
     <h3 data-i18n="sheet.store">App store</h3>
     <div class="row">
-      <input type="text" id="storeQ" placeholder="Search apps / packages…" enterkeyhint="search">
-      <button id="storeGo" class="primary" style="flex:0 0 90px">Search</button>
+      <input type="text" id="storeQ" placeholder="Search apps / packages…" data-i18n-ph="store.searchPh" enterkeyhint="search" aria-label="Search the app store">
+      <button id="storeGo" class="primary" style="flex:0 0 90px" data-i18n="btn.search">Search</button>
     </div>
     <div id="storeList"><div class="strow"><div class="nm"><small>Type to search the app catalog…</small></div></div></div>
   </div>
 
   <div class="sheet" id="shAudio" role="dialog" aria-modal="true" aria-label="Audio">
     <h3 data-i18n="sheet.audio">Audio</h3>
-    <div class="row"><button class="primary" id="audioStart">Start</button><button id="audioStop">Stop</button></div>
+    <div class="row"><button class="primary" id="audioStart" data-i18n="audio.start">Start</button><button id="audioStop" data-i18n="audio.stop">Stop</button></div>
     <div class="row">
       <label>Codec</label>
       <select id="audioCodec">
@@ -281,7 +281,7 @@
       </select>
     </div>
     <div class="row"><label>Volume</label><input type="range" id="audioVol" min="0" max="1" step="0.05" value="0.9"></div>
-    <div class="row"><button id="audioTest">Play test tone</button></div>
+    <div class="row"><button id="audioTest" data-i18n="audio.test">Play test tone</button></div>
     <hr>
     <h3>Devices in — desktop browser only</h3>
     <div class="row" id="devRow" hidden>
@@ -294,7 +294,7 @@
   <div class="sheet" id="shFiles" role="dialog" aria-modal="true" aria-label="Files">
     <h3><span data-i18n="sheet.files">Files</span> — ~/Downloads</h3>
     <div class="row">
-      <button class="primary" id="upBtn">⬆ Upload from phone</button>
+      <button class="primary" id="upBtn" data-i18n="files.upload">⬆ Upload from phone</button>
       <input type="file" id="upInput" multiple style="display:none">
     </div>
     <div class="row" id="upProgRow" style="display:none">
@@ -310,9 +310,9 @@
     <h3 data-i18n="sheet.system">System</h3>
     <div id="statsBox" class="stats"><small style="color:#777">Loading stats…</small></div>
     <hr>
-    <h3>Display</h3>
+    <h3 data-i18n="more.display">Display</h3>
     <div class="row">
-      <button id="matchBtn" class="primary">Match desktop to screen</button>
+      <button id="matchBtn" class="primary" data-i18n="more.match">Match desktop to screen</button>
     </div>
     <div class="row">
       <div class="seg" id="vpSeg" role="group" aria-label="Viewport mode">
@@ -323,7 +323,7 @@
       </div>
     </div>
     <div class="row">
-      <button id="vpReset" aria-label="Reset zoom">Reset zoom</button>
+      <button id="vpReset" data-i18n="more.resetZoom">Reset zoom</button>
       <span class="val" id="zoomVal">100%</span>
     </div>
     <div class="row"><label id="vpScale"></label></div>
@@ -336,6 +336,15 @@
         <option value="light">Light</option>
         <option value="high">High contrast</option>
         <option value="auto">Auto</option>
+      </select>
+    </div>
+    <div class="row">
+      <label data-i18n="more.language">Language</label>
+      <select id="langSel" aria-label="Language">
+        <option value="en">English</option>
+        <option value="de">Deutsch</option>
+        <option value="es">Español</option>
+        <option value="fr">Français</option>
       </select>
     </div>
     <hr>
@@ -359,12 +368,12 @@
       </select>
     </div>
     <div class="row">
-      <label>Stream quality</label>
+      <label data-i18n="more.quality">Stream quality</label>
       <input type="range" id="quality" min="0" max="9" step="1" value="6">
       <span class="val" id="qualityVal">6</span>
     </div>
     <div class="row">
-      <label>Keep screen awake</label>
+      <label data-i18n="more.keepAwake">Keep screen awake</label>
       <div class="check"><input type="checkbox" id="wake" checked></div>
     </div>
     <hr>
@@ -374,7 +383,7 @@
     </div>
     <div class="row"><label id="orientStatus"></label></div>
     <hr>
-    <h3>Screen edges</h3>
+    <h3 data-i18n="more.edges">Screen edges</h3>
     <div class="row">
       <label>Reserved edge for system nav bar (px · auto = none unless the OS overlays)</label>
       <button class="step" id="navMinus" aria-label="Less edge reserve">−</button><span class="val" id="navVal">auto</span><button class="step" id="navPlus" aria-label="More edge reserve">+</button>
@@ -387,29 +396,29 @@
     </div>
     <div class="row"><button id="autoCrop">Re-detect screen edges</button></div>
     <hr>
-    <h3>Clipboard history</h3>
+    <h3 data-i18n="more.clipboard">Clipboard history</h3>
     <div class="row">
-      <button id="copyFromBtn" class="primary">Desktop → Phone</button>
-      <button id="pasteToBtn">Phone → Desktop</button>
+      <button id="copyFromBtn" class="primary" data-i18n="more.copyFrom">Desktop → Phone</button>
+      <button id="pasteToBtn" data-i18n="more.pasteTo">Phone → Desktop</button>
     </div>
-    <div class="row"><button id="typeBtn">Type clipboard as keystrokes</button></div>
+    <div class="row"><button id="typeBtn" data-i18n="more.typeClip">Type clipboard as keystrokes</button></div>
     <div id="clipList"></div>
-    <div class="row"><button id="clipRefresh">Refresh</button><button id="clipClear">Clear history</button></div>
+    <div class="row"><button id="clipRefresh" data-i18n="btn.refresh">Refresh</button><button id="clipClear" data-i18n="more.clearHist">Clear history</button></div>
     <hr>
-    <h3>Session</h3>
+    <h3 data-i18n="more.session">Session</h3>
     <div class="row">
-      <button id="reconnectBtn">Reconnect</button>
-      <button id="clipboardBtn">Paste to remote</button>
+      <button id="reconnectBtn" data-i18n="btn.reconnect">Reconnect</button>
+      <button id="clipboardBtn" data-i18n="more.pasteRemote">Paste to remote</button>
     </div>
-    <div class="row"><button id="installBtn" hidden>Install app on this device</button></div>
-    <div class="row"><button id="logoutBtn">Log out</button></div>
+    <div class="row"><button id="installBtn" hidden data-i18n="btn.install">Install app on this device</button></div>
+    <div class="row"><button id="logoutBtn" data-i18n="btn.logout">Log out</button></div>
     <div id="info"></div>
   </div>
 
   <div id="overlay">
     <div class="logo">REMOTE DESKTOP</div>
     <div class="spin" id="ovSpin"></div>
-    <button id="ovBtn" style="display:none">Reconnect</button>
+    <button id="ovBtn" style="display:none" data-i18n="btn.reconnect">Reconnect</button>
     <div id="ovText" style="font-size:12px;color:#777">Connecting…</div>
   </div>
 
@@ -446,9 +455,52 @@ function status(t, err){
   $('ovText').textContent = t;
 }
 
-/* i18n helper — populated by the localization layer (#54); until then the
-   English fallback text is used everywhere. */
-function i18nT(key, fallback){ return fallback ?? key; }
+/* ------------------------------------------------------------------ *
+ *  Localization (#54): shell strings live in web/locales/*.json.      *
+ *  Missing keys fall back to English; switching applies instantly.    *
+ * ------------------------------------------------------------------ */
+const LOCALES = ['en', 'de', 'es', 'fr'];
+let i18nDict = {}, i18nLang = 'en';
+function i18nT(key, fallback){
+  const v = i18nDict[key];
+  if (typeof v === 'string' && v) return v;
+  return fallback ?? key;      // English fallback everywhere
+}
+function i18nApply(){
+  document.querySelectorAll('[data-i18n]').forEach(el =>
+    el.textContent = i18nT(el.dataset.i18n, el.textContent));
+  document.querySelectorAll('[data-i18n-ph]').forEach(el =>
+    el.placeholder = i18nT(el.dataset.i18nPh, el.placeholder));
+  document.querySelectorAll('[data-i18n-aria]').forEach(el =>
+    el.setAttribute('aria-label', i18nT(el.dataset.i18nAria, el.getAttribute('aria-label'))));
+}
+async function i18nLoad(lang){
+  if (!LOCALES.includes(lang)) lang = 'en';
+  try {
+    const r = await fetch('/locales/' + lang + '.json', { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    i18nDict = await r.json();
+    i18nLang = lang;
+  } catch (_) {
+    i18nDict = {};
+    i18nLang = 'en';
+  }
+  i18nApply();
+  // touch.js builds labelled controls; rebuild them in the new language
+  if (window.__touch && window.__touch.rebuild) try { window.__touch.rebuild(); } catch (_) {}
+}
+function detectLang(){
+  const pref = store.get('lang', null);
+  if (pref && LOCALES.includes(pref)) return pref;
+  const nav = (navigator.language || 'en').slice(0, 2).toLowerCase();
+  return LOCALES.includes(nav) ? nav : 'en';
+}
+$('langSel').value = detectLang();
+$('langSel').addEventListener('change', e => {
+  store.set('lang', e.target.value);
+  i18nLoad(e.target.value);
+});
+i18nLoad(detectLang());
 
 /* Transient action overlay: names the gesture that fired (#44) and carries
    an optional undo button for destructive taps (#68). */
@@ -706,7 +758,7 @@ function initTouchOnce(){
       rfb, screenEl, appEl, status, $,
       menu: $('shMore'),           // touch settings get appended to the More sheet
       keyboardButton: $('bKeys'),  // toolbar button toggles the mobile keyboard
-      t: key => i18nT(key),        // localized labels for touch settings (#54)
+      t: i18nT,                    // localized labels for touch settings (#54)
       vpInfo: updateVpInfo,        // keep the zoom indicator live (#42)
       onModeChange: paintTouchBtn, // sync the toolbar toggle (#41)
       actionToast: toast,          // transient gesture overlay (#44)
