@@ -461,7 +461,9 @@ def clip_sync(since_id):
         items = list(_clip_history)
     if since_id:
         idx = next((i for i, it in enumerate(items) if it["id"] == since_id), None)
-        new = items[:idx] if idx is not None else []
+        # an unknown/trimmed since id falls back to the newest item so the
+        # phone can never deadlock on a stale cursor
+        new = items[:idx] if idx is not None else items[:1]
     else:
         new = items[:1]  # first poll: at most the newest item
     out = [

@@ -180,9 +180,10 @@ def list_snap_apps():
     if rc != 0 or not out.strip():
         return apps
     lines = out.strip().splitlines()[1:]  # header: Name Version Rev ...
+    runtime_snaps = {"core", "core18", "core20", "core22", "core24", "core26", "snapd", "bare"}
     for line in lines:
         cols = line.split()
-        if not cols or cols[0] in ("core", "snapd", "bare") or cols[0].endswith("-kernel"):
+        if not cols or cols[0] in runtime_snaps or cols[0].endswith("-kernel"):
             continue
         name = cols[0]
         apps.append(
@@ -209,8 +210,13 @@ def list_snap_apps():
 CUSTOM_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,59}")
 
 
+SHELL_WRAPPERS = {"sh", "bash", "dash", "zsh", "fish", "ksh", "powershell", "cmd", "cmd.exe"}
+
+
 def validate_custom_app(data):
-    """Validate a custom app entry. Returns (entry, None) or (None, error)."""
+    """Validate a custom app entry. Returns (entry, None) or (None, error).
+    Commands are argv vectors launched WITHOUT a shell (#63 acceptance):
+    no wrapper may smuggle a shell string through."""
     if not isinstance(data, dict):
         return None, "body must be an object"
     label = str(data.get("label") or "").strip()
@@ -226,10 +232,13 @@ def validate_custom_app(data):
         if "\x00" in c or "\n" in c or "\r" in c:
             return None, "cmd entries may not contain control characters"
         clean.append(c.strip())
-    # never interpolate into a shell (#63 acceptance): entries launch as an
+    if os.path.basename(clean[0]).lower() in SHELL_WRAPPERS:
+        return None, "no shell wrappers — enter the binary and its arguments directly"
+    # never interpolated into a shell (#63 acceptance): entries launch as an
     # argv vector via execvp — there is no shell to escape out of.
     entry = {
         "id": "",
+        "name": label,  # the shared app pipeline matches/ranks on `name`
         "label": label,
         "cmd": clean,
         "desc": str(data.get("desc") or "").strip()[:120],
@@ -250,7 +259,12 @@ def validate_custom_app(data):
 
 
 def list_custom_apps():
-    return state.load_custom_apps()
+    out = []
+    for e in state.load_custom_apps():
+        if not e.get("name"):
+            e["name"] = e.get("label") or e.get("id") or "custom app"
+        out.append(e)
+    return out
 
 
 def add_custom_app(data):
@@ -288,14 +302,14 @@ def _dedupe(sources):
     (same name or WM_CLASS) are dropped (#65). Custom entries always win
     over discovered ones with the same id."""
     desktop = [dict(a, source="desktop") for a in sources.get("desktop", [])]
-    names = {a["name"].strip().lower() for a in desktop}
-    classes = {a["wmclass"].strip().lower() for a in desktop if a.get("wmclass")}
+    names = {(a.get("name") or "").strip().lower() for a in desktop}
+    classes = {(a.get("wmclass") or "").strip().lower() for a in desktop if a.get("wmclass")}
     merged = list(desktop)
     for src in ("flatpak", "snap"):
         for a in sources.get(src, []):
-            nm = a["name"].strip().lower()
+            nm = (a.get("name") or "").strip().lower()
             wm = (a.get("wmclass") or "").strip().lower()
-            if nm in names or (wm and wm in classes):
+            if not nm or nm in names or (wm and wm in classes):
                 continue  # already discoverable as a .desktop entry
             merged.append(a)
             names.add(nm)
@@ -314,13 +328,14 @@ def _rank(apps):
 
     def key(a):
         aid = a["id"]
+        nm = (a.get("name") or aid).lower()
         pin = pin_pos.get(aid)
         ts = recents.get(aid)
         if pin is not None:
-            return (0, pin, 0, a["name"].lower())
+            return (0, pin, 0, nm)
         if ts is not None:
-            return (1, -ts, 0, a["name"].lower())
-        return (2, 0, 0, a["name"].lower())
+            return (1, -ts, 0, nm)
+        return (2, 0, 0, nm)
 
     return sorted(apps, key=key)
 
