@@ -10,7 +10,8 @@ JSON errors are `{"ok": false, "error": "..."}` with 4xx/5xx status.
 
 | Method | Path | Body / query | Description |
 |---|---|---|---|
-| GET | `/api/health` | — | `{"ok":true,"time":<unix>}` liveness probe |
+| GET | `/api/health` | — | `{"ok":true,"time":<unix>}` liveness probe (dependency-free) |
+| GET | `/api/ready` | — | Readiness (#40): 200/503 with per-dependency `{x,vnc,pulse,ffmpeg}` status |
 | GET | `/login` | — | Login page |
 | POST | `/api/login` | `{"username","password"}` | Sets `rd_session`; 401 on failure, 429 when rate-limited |
 | POST | `/api/logout` | — | Clears the cookie |
@@ -49,6 +50,17 @@ JSON errors are `{"ok": false, "error": "..."}` with 4xx/5xx status.
 |---|---|---|---|
 | GET | `/api/pins` | — | `{"pins": ["...desktop", ...]}` |
 | POST | `/api/pins/toggle` | `{"id": "..."}` | Add/remove a pin, returns the new list |
+
+## Backup / state (#30)
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/api/backup` | Snapshot pins + clipboard history into the versioned backups dir |
+| GET | `/api/backup` | List backups with their manifests |
+
+Backups live in `RD_STATE_DIR/backups/` (newest 5 kept). CLI:
+`control.py --export-state FILE.tar.gz` / `--import-state FILE.tar.gz`
+move state between hosts; the password hash is never included.
 
 ## Clipboard
 
@@ -101,7 +113,7 @@ WebM (MediaRecorder) frames onto the first `/dev/video*` device — set
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/api/stats` | `{cpu_pct,load,cores,mem_used,mem_total,disk_used,disk_total,uptime_s}` |
+| GET | `/api/stats` | `{cpu_pct,load,cores,mem_used,mem_total,disk_used,disk_total,uptime_s,conns,ws,geometry}` |
 | GET | `/icon/<app-id>` | Resolved .desktop icon (PNG/SVG/JPEG) |
 
 ## Websocket
