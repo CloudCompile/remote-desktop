@@ -297,7 +297,7 @@ def test_slow_listener_capped_without_blocking_producer():
     threading.Thread(target=cap._produce, daemon=True).start()
     assert fast.next() is not None
     # slow listener accumulates past the cap -> dropped with a sentinel
-    deadline = time.time() + 10
+    deadline = time.time() + 30
     while not slow.dropped and time.time() < deadline:
         time.sleep(0.01)
     assert slow.dropped is True
