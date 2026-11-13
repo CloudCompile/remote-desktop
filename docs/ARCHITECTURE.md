@@ -72,8 +72,17 @@ only way the server starts. Decisions behind this layout: [ADR-0001](adr/ADR-000
 - `touch.js` — trackpad gesture layer. Keeps the cursor in remote
   framebuffer coordinates and converts to screen coordinates when calling
   noVNC's `_sendMouse`, so it survives zoom/resize.
-- `core/` — vendored noVNC RFB/websock/display/decoders/input (MPL-2.0).
+- `core/` — vendored noVNC RFB/websock/display/decoders/input (MPL-2.0, [ADR-0004](adr/ADR-0004-vendored-novnc-client.md)).
 - `app/` — vendored noVNC app utilities (only a subset is used).
+
+### Scaling vs geometry (#31)
+
+noVNC scales the remote framebuffer to the browser viewport locally
+(`resize=scale`); the *remote* resolution only controls sharpness and
+server-side window sizes. Set it deliberately with `RD_GEOMETRY`/`RD_DPI`
+(session start), resize from the UI (persisted in
+`~/.local/share/remote-desktop/display.json`), and prefer the UI's resize
+over pinch-zoom so text stays crisp on high-DPI phones.
 
 ## Session (`session.sh`)
 
