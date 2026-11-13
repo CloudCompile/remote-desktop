@@ -5,15 +5,21 @@ Module map (ownership notes at the top of each module):
     config.py    every RD_*/VNC_* setting: one schema, validation, generated docs
     log.py       structured logging: levels, request ids, text/json, rotation (module: logging.py)
     procs.py     child-process registry + subprocess helpers
-    auth.py      cookie tokens, password check, login rate limiting
+    auth.py      multi-user cookie tokens, session registry (#114), CSRF (#116),
+                 persistent login rate limiting (#115), key rotation (#118)
+    users.py     user store: accounts, roles, migration (#111/#112)
+    totp.py      TOTP (RFC 6238) + recovery codes (#109)
+    audit.py     tamper-evident hash-chained audit log (#113)
+    notify.py    login notifications (#123)
+    webauthn.py  passkey storage + ceremonies, opt-in (#110)
     http.py      BaseHandler plumbing + static files
     server.py    routes, bounded server, graceful shutdown, CLI
     ws.py        RFC6455 primitives (reader, frames, upgrade)
     vncproxy.py  /websockify: websocket -> VNC TCP with backpressure + reconnect
     audio.py     PulseAudio helpers, audio-out source/status
     media_in.py  device-in websockets (mic, webcam)
-    clipboard.py X clipboard + persisted history
-    files.py     upload/download directory
+    clipboard.py X clipboard + persisted history (per-user #120)
+    files.py     upload/download directory (per-user roots #120)
     apps.py      .desktop discovery, icons, launching
     store.py     apt app-store search/install
     windows.py   xdotool window management, xrandr resize
@@ -28,6 +34,7 @@ the server starts only via server.main() (see control.py).
 from . import (
     apps,
     audio,
+    audit,
     auth,
     clipboard,
     config,
@@ -36,11 +43,15 @@ from . import (
     limits,
     logging as _logmod,
     media_in,
+    notify,
     procs,
     ready,
     state,
     stats,
+    totp,
+    users,
     vncproxy,
+    webauthn,
     windows,
     ws,
 )
@@ -235,6 +246,12 @@ __all__ = [
     "_parse_cookie",
     "_verify_password",
     "_verify_token",
+    # v2.6.0 security modules (also importable as remote_desktop.users etc.)
+    "audit",
+    "users",
+    "totp",
+    "notify",
+    "webauthn",
     # clipboard
     "CLIP_HISTORY_FILE",
     "CLIP_HISTORY_MAX",

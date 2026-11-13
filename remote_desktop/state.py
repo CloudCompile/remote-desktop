@@ -27,7 +27,7 @@ import tempfile
 import time
 
 from . import clipboard as _clipboard
-from . import config, logging as log
+from . import config, logging as log, users
 
 STATE_VERSION = 1
 BACKUP_KEEP = 5
@@ -129,6 +129,14 @@ def save_audio_state(data):
 # `order` list exactly once and belongs to at most one folder.
 
 
+def pins_file(user=None):
+    """Per-user pins file (#120): the default admin keeps the legacy
+    path, everyone else gets a namespaced file under their user dir."""
+    if not user or users.is_default_admin(user):
+        return PINS_FILE
+    return os.path.join(users.user_dir(user), "pins.json")
+
+
 def _clean_folder(f):
     """Validate one folder record; None when it should be dropped."""
     if not isinstance(f, dict):
@@ -143,9 +151,9 @@ def _clean_folder(f):
     return {"name": name, "apps": apps[:100]}
 
 
-def _load_pins_v2():
+def _load_pins_v2(user=None):
     try:
-        with open(PINS_FILE) as f:
+        with open(pins_file(user)) as f:
             raw = json.load(f)
     except Exception:
         return {"version": 2, "order": [], "folders": []}
@@ -165,8 +173,8 @@ def _load_pins_v2():
     return {"version": 2, "order": [], "folders": []}
 
 
-def _save_pins_v2(data):
-    _atomic_json(PINS_FILE, data)
+def _save_pins_v2(data, user=None):
+    _atomic_json(pins_file(user), data)
 
 
 def _folder_of(data, app_id):
@@ -176,96 +184,96 @@ def _folder_of(data, app_id):
     return None
 
 
-def load_pins():
-    """Back-compat flat ordered pin list."""
-    return _load_pins_v2()["order"]
+def load_pins(user=None):
+    """Back-compat flat ordered pin list. Scoped per user (#120)."""
+    return _load_pins_v2(user)["order"]
 
 
-def pins_snapshot():
+def pins_snapshot(user=None):
     """Pins with folders (#64); "Unfiled" is computed, never stored."""
-    data = _load_pins_v2()
+    data = _load_pins_v2(user)
     unfiled = [p for p in data["order"] if _folder_of(data, p) is None]
     folders = [{"name": UNFILED, "apps": unfiled, "virtual": True}]
     folders += [{"name": f["name"], "apps": f["apps"]} for f in data["folders"]]
     return {"pins": data["order"], "folders": folders}
 
 
-def save_pins(pins):
+def save_pins(pins, user=None):
     """Replace the flat pin order (keeps folders that still reference valid pins)."""
     pins = [p for p in pins if isinstance(p, str) and len(p) < 200][:100]
-    data = _load_pins_v2()
+    data = _load_pins_v2(user)
     data["order"] = pins
     for f in data["folders"]:
         f["apps"] = [a for a in f["apps"] if a in set(pins)]
-    _save_pins_v2(data)
+    _save_pins_v2(data, user)
 
 
-def pins_toggle(app_id):
+def pins_toggle(app_id, user=None):
     """Add/remove a pin. Returns the new snapshot or None for a bad id."""
     if not app_id or len(app_id) > 200:
         return None
-    data = _load_pins_v2()
+    data = _load_pins_v2(user)
     if app_id in data["order"]:
         data["order"].remove(app_id)
         for f in data["folders"]:
             f["apps"] = [a for a in f["apps"] if a != app_id]
     else:
         data["order"].insert(0, app_id)
-    _save_pins_v2(data)
-    return pins_snapshot()
+    _save_pins_v2(data, user)
+    return pins_snapshot(user)
 
 
-def pins_reorder(ids):
+def pins_reorder(ids, user=None):
     """Set the pin order (#64). Unknown ids are appended, missing ones kept."""
     if not isinstance(ids, list):
         return None
     ids = [str(i)[:200] for i in ids if isinstance(i, str) and i]
-    data = _load_pins_v2()
+    data = _load_pins_v2(user)
     known = [p for p in data["order"] if p not in set(ids)]
     data["order"] = (ids + known)[:100]
-    _save_pins_v2(data)
-    return pins_snapshot()
+    _save_pins_v2(data, user)
+    return pins_snapshot(user)
 
 
-def pins_folder_create(name):
+def pins_folder_create(name, user=None):
     """Create a pin folder (#64). Returns the snapshot or an error key."""
     if not isinstance(name, str):
         return {"error": "invalid name"}
     name = name.strip()[:PIN_NAME_MAX]
     if not name or name.lower() == UNFILED.lower():
         return {"error": "invalid name"}
-    data = _load_pins_v2()
+    data = _load_pins_v2(user)
     if any(f["name"].lower() == name.lower() for f in data["folders"]):
         return {"error": "exists"}
     if len(data["folders"]) >= PIN_FOLDERS_MAX:
         return {"error": "too many folders"}
     data["folders"].append({"name": name, "apps": []})
-    _save_pins_v2(data)
-    return pins_snapshot()
+    _save_pins_v2(data, user)
+    return pins_snapshot(user)
 
 
-def pins_folder_delete(name):
+def pins_folder_delete(name, user=None):
     """Delete a folder; its pins stay pinned (back under Unfiled) (#64)."""
-    data = _load_pins_v2()
+    data = _load_pins_v2(user)
     data["folders"] = [f for f in data["folders"] if f["name"] != name]
-    _save_pins_v2(data)
-    return pins_snapshot()
+    _save_pins_v2(data, user)
+    return pins_snapshot(user)
 
 
-def pins_assign(app_id, folder):
+def pins_assign(app_id, folder, user=None):
     """Assign a pin to at most one folder ("" = unfile) (#64)."""
     if not app_id or len(app_id) > 200 or not isinstance(folder, str):
         return {"error": "invalid"}
-    data = _load_pins_v2()
+    data = _load_pins_v2(user)
     if app_id not in data["order"]:
         return {"error": "not pinned"}
     folder = folder.strip()[:PIN_NAME_MAX]
     if folder and folder.lower() != UNFILED.lower():
         if not any(f["name"] == folder for f in data["folders"]):
-            r = pins_folder_create(folder)
+            r = pins_folder_create(folder, user)
             if r.get("error"):
                 return r
-        data = _load_pins_v2()
+        data = _load_pins_v2(user)
         for f in data["folders"]:
             if app_id in f["apps"]:
                 f["apps"].remove(app_id)
@@ -276,8 +284,8 @@ def pins_assign(app_id, folder):
         for f in data["folders"]:
             if app_id in f["apps"]:
                 f["apps"].remove(app_id)
-    _save_pins_v2(data)
-    return pins_snapshot()
+    _save_pins_v2(data, user)
+    return pins_snapshot(user)
 
 
 # ------------------------------------------------------------- display state
@@ -361,13 +369,17 @@ LAUNCH_HISTORY_MAX = 500
 LAUNCH_RECENT_DAYS = 7
 
 
-def launch_history_file():
-    return os.path.join(state_dir(), "launch-history.json")
+def launch_history_file(user=None):
+    """Per-user launch history (#120); default admin keeps the legacy path."""
+    if not user or users.is_default_admin(user):
+        return os.path.join(state_dir(), "launch-history.json")
+    return os.path.join(users.user_dir(user), "launch-history.json")
 
 
-def load_launches():
+def load_launches(user=None):
+    """Launch history, scoped per user (#120)."""
     try:
-        with open(launch_history_file()) as f:
+        with open(launch_history_file(user)) as f:
             raw = json.load(f)
         if isinstance(raw, list):
             out = []
@@ -384,25 +396,25 @@ def load_launches():
     return []
 
 
-def record_launch(app_id):
+def record_launch(app_id, user=None):
     """Record one launch (most recent first, capped at 500 entries) (#62)."""
     if not isinstance(app_id, str) or not app_id or len(app_id) > 200:
         return False
-    items = [e for e in load_launches() if e["id"] != app_id]
+    items = [e for e in load_launches(user) if e["id"] != app_id]
     items.insert(0, {"id": app_id, "ts": int(time.time())})
-    return _atomic_json(launch_history_file(), items[:LAUNCH_HISTORY_MAX])
+    return _atomic_json(launch_history_file(user), items[:LAUNCH_HISTORY_MAX])
 
 
-def clear_launches():
+def clear_launches(user=None):
     """Wipe launch history; pins and the app list are untouched (#62)."""
-    return _atomic_json(launch_history_file(), [])
+    return _atomic_json(launch_history_file(user), [])
 
 
-def recent_launches(days=LAUNCH_RECENT_DAYS):
+def recent_launches(days=LAUNCH_RECENT_DAYS, user=None):
     """app id -> last launch ts within the window, newest-first deduped (#62)."""
     cutoff = time.time() - days * 86400
     out = {}
-    for e in load_launches():
+    for e in load_launches(user):
         if e["ts"] >= cutoff and e["id"] not in out:
             out[e["id"]] = e["ts"]
     return out

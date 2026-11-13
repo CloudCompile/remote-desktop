@@ -30,12 +30,54 @@ CLIP_IMAGE_DIR = os.path.join(config.HOME, ".cache", "remote-clipboard")  # #71
 CLIP_IMAGE_MAX = 5 * 1024 * 1024  # #71: 5 MB cap, larger images are skipped
 CLIP_PREVIEW_MAX = 64 * 1024  # #71: data-URI budget per image item
 CLIP_SYNC_MAX = 10  # #72: items per sync poll
+HISTORIES_MAX = 64  # in-memory per-user histories (#120); least-recently used evicted
 
-_clip_history = []
+_clip_history = []  # the LEGACY/default history (default admin; None user key)
+_histories = {None: _clip_history}  # per-user in-memory histories (#120)
+_hist_touch = {}  # user -> last access (LRU for eviction)
 _clip_lock = threading.Lock()
 _clip_last_sel = {"clipboard": None, "primary": None}
 _clip_last_image_sha = None
 _clip_last_uri = None
+
+
+def _ns(user):
+    """Namespace key for a request's user (#120): the default admin (and
+    legacy callers) share the original paths; everyone else gets a
+    per-user history."""
+    from . import users
+
+    if not user or users.is_default_admin(user):
+        return None
+    return str(user)[:64]
+
+
+def _hist(user):
+    """The in-memory history for `user` (loaded from disk on first use)."""
+    ns = _ns(user)
+    if ns is None:
+        return _clip_history
+    h = _histories.get(ns)
+    if h is None:
+        _histories[ns] = h = _clip_load_file(_hist_file(user))
+    _hist_touch[ns] = time.time()
+    if len(_histories) > HISTORIES_MAX:  # evict the least-recently used
+        for k in sorted(_hist_touch, key=_hist_touch.get)[: len(_histories) - HISTORIES_MAX]:
+            if k is not None and k in _histories:
+                with _clip_lock:
+                    stale = _histories.pop(k)
+                    _clip_save_file(_hist_file(k), stale)
+                _hist_touch.pop(k, None)
+    return h
+
+
+def _hist_file(user):
+    """Persistent history file for `user` (legacy path for the default admin)."""
+    if _ns(user) is None:
+        return CLIP_HISTORY_FILE
+    from . import users
+
+    return os.path.join(users.user_dir(user), "cliphistory.json")
 
 
 def _run_xclip(cmd, timeout=4):
@@ -99,14 +141,14 @@ def clipboard_get():
     return {"clipboard": cb[:100000], "primary": prim[:100000], "text": (cb or prim)[:100000]}
 
 
-def clipboard_set(text):
+def clipboard_set(text, user=None):
     """Write the text into BOTH X selections so any app can paste it
     (Ctrl+V apps read CLIPBOARD, terminals/middle-click read PRIMARY)."""
     if not text:
         return {"ok": False, "error": "empty text"}
     ok_cb = _clip_set("clipboard", text)
     ok_prim = _clip_set("primary", text)
-    clip_add(text, "phone")
+    clip_add(text, "phone", user=user)
     return {"ok": ok_cb or ok_prim}
 
 
@@ -116,9 +158,10 @@ def clipboard_set(text):
 # preview in the history item.
 
 
-def clip_image_path(clip_id):
-    """Validated on-disk path of a stored image item, or None."""
-    it = clip_item(clip_id)
+def clip_image_path(clip_id, user=None):
+    """Validated on-disk path of a stored image item, or None (the item
+    must be in THIS user's history, #120)."""
+    it = clip_item(clip_id, user)
     if not it or it.get("kind") != "image":
         return None
     p = it.get("path") or ""
@@ -248,15 +291,19 @@ def clip_add_image(data):
     }
 
 
-def clip_add(text, source, kind="text"):
+def clip_add(text, source, kind="text", user=None):
+    """Record an item. `user=None` is the legacy/desktop history; the X
+    watcher always records there (the desktop stream), while API access
+    is scoped per user (#120)."""
     if not text:
         return
     text = text[:CLIP_ITEM_MAX]
     with _clip_lock:
-        if _clip_history and _clip_history[0]["text"] == text and _clip_history[0].get("kind", "text") == kind:
-            _clip_history[0]["time"] = int(time.time())  # bump recency
+        h = _hist(user)
+        if h and h[0]["text"] == text and h[0].get("kind", "text") == kind:
+            h[0]["time"] = int(time.time())  # bump recency
         else:
-            _clip_history.insert(
+            h.insert(
                 0,
                 {
                     "id": hashlib.sha1(f"{time.time_ns()}:{text[:64]}".encode()).hexdigest()[:12],
@@ -268,49 +315,55 @@ def clip_add(text, source, kind="text"):
                     "tags": [],
                 },
             )
-        _trim_locked()
-        _clip_save()
+        _trim_locked(h)
+        _clip_save_file(_hist_file(user), h)
 
 
-def _trim_locked():
+def _trim_locked(h):
     """Rolling history limit; pinned items are exempt (#70)."""
-    if len(_clip_history) <= CLIP_HISTORY_MAX:
+    if len(h) <= CLIP_HISTORY_MAX:
         return
     kept, unpinned = [], 0
-    for it in _clip_history:  # newest first
+    for it in h:  # newest first
         if it.get("pinned"):
             kept.append(it)
         elif unpinned < CLIP_HISTORY_MAX:
             kept.append(it)
             unpinned += 1
-    _clip_history[:] = kept
+    h[:] = kept
 
 
-def _clip_save():
+def _clip_save_file(path, items):
     """Atomic write (#17): dump to a temp file in the same directory, fsync,
     then rename over the live file so a crash or full disk can never
-    truncate .cliphistory.json."""
+    truncate the history file."""
     try:
-        tmp = CLIP_HISTORY_FILE + ".tmp"
+        d = os.path.dirname(path)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        tmp = path + ".tmp"
         with open(tmp, "w") as f:
-            json.dump(_clip_history, f)
+            json.dump(items, f)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, CLIP_HISTORY_FILE)
-        os.chmod(CLIP_HISTORY_FILE, 0o600)
+        os.replace(tmp, path)
+        os.chmod(path, 0o600)
     except Exception:
         pass
 
 
-def _clip_load():
-    """Load the persisted history defensively (#17): validate the JSON
+def _clip_save(user=None):
+    _clip_save_file(_hist_file(user), _hist(user))
+
+
+def _clip_load_file(path):
+    """Load one history file defensively (#17): validate the JSON
     structure, coerce/skip bad entries, default the additive fields
     (#70/#71), deduplicate, trim to the maximum, and quarantine a corrupt
     file instead of crashing or losing the good copy."""
-    global _clip_history
     loaded = []
     try:
-        with open(CLIP_HISTORY_FILE) as f:
+        with open(path) as f:
             raw = json.load(f)
         if isinstance(raw, list):
             seen = set()
@@ -348,21 +401,35 @@ def _clip_load():
                 loaded.append(entry)
     except (ValueError, OSError):
         try:
-            os.replace(CLIP_HISTORY_FILE, CLIP_HISTORY_FILE + f".corrupt-{int(time.time())}")
+            os.replace(path, path + f".corrupt-{int(time.time())}")
             log.log("clipboard history was corrupt; quarantined and starting empty")
         except Exception:
             pass
+    return loaded
+
+
+def _clip_load(user=None):
+    """(Re)load a history from disk into memory (#17)."""
+    global _clip_history
+    ns = _ns(user)
+    loaded = _clip_load_file(_hist_file(user))
     with _clip_lock:
-        _clip_history = loaded
-        _trim_locked()
+        if ns is None:
+            _clip_history[:] = loaded
+            _trim_locked(_clip_history)
+        else:
+            _histories[ns] = loaded
+            _trim_locked(_histories[ns])
+            _hist_touch[ns] = time.time()
 
 
-def clip_history(q=None, tag=None):
+def clip_history(q=None, tag=None, user=None):
     """History for the UI (#70): pinned items first (then newest), filtered
     by a full-text substring (searches the WHOLE text, not just the preview)
-    and by tag. Image previews ride along for the newest few image items."""
+    and by tag. Image previews ride along for the newest few image items.
+    Scoped to the request's user (#120)."""
     with _clip_lock:
-        items = list(_clip_history)
+        items = list(_hist(user))
     if tag:
         tl = str(tag).lower().lstrip("#")
         items = [it for it in items if tl in [t.lower() for t in it.get("tags", [])]]
@@ -394,34 +461,34 @@ def clip_history(q=None, tag=None):
     return out
 
 
-def clip_tags():
+def clip_tags(user=None):
     """All tags in use, for the filter chips (#70)."""
     with _clip_lock:
         tags = []
-        for it in _clip_history:
+        for it in _hist(user):
             for t in it.get("tags", []):
                 if t.lower() not in [x.lower() for x in tags]:
                     tags.append(t)
     return tags
 
 
-def clip_item(clip_id):
+def clip_item(clip_id, user=None):
     with _clip_lock:
-        return next((dict(it) for it in _clip_history if it["id"] == clip_id), None)
+        return next((dict(it) for it in _hist(user) if it["id"] == clip_id), None)
 
 
-def clip_pin(clip_id, pinned):
+def clip_pin(clip_id, pinned, user=None):
     """Pin/unpin one item; pinned items survive trimming (#70)."""
     with _clip_lock:
-        it = next((i for i in _clip_history if i["id"] == clip_id), None)
+        it = next((i for i in _hist(user) if i["id"] == clip_id), None)
         if not it:
             return False
         it["pinned"] = bool(pinned)
-        _clip_save()
+        _clip_save(user)
         return True
 
 
-def clip_tag(clip_id, tags):
+def clip_tag(clip_id, tags, user=None):
     """Replace an item's tag list (#70). Accepts a list or a comma string."""
     if isinstance(tags, str):
         tags = tags.split(",")
@@ -436,35 +503,38 @@ def clip_tag(clip_id, tags):
         if len(clean) >= CLIP_TAGS_MAX:
             break
     with _clip_lock:
-        it = next((i for i in _clip_history if i["id"] == clip_id), None)
+        it = next((i for i in _hist(user) if i["id"] == clip_id), None)
         if not it:
             return False
         it["tags"] = clean
-        _clip_save()
+        _clip_save(user)
         return True
 
 
-def clip_remove(clip_id):
+def clip_remove(clip_id, user=None):
     with _clip_lock:
-        _clip_history[:] = [it for it in _clip_history if it["id"] != clip_id]
-        _clip_save()
+        h = _hist(user)
+        h[:] = [it for it in h if it["id"] != clip_id]
+        _clip_save(user)
 
 
-def clip_clear(keep_pinned=True):
-    """Bulk clear (#70): pinned items survive by default."""
+def clip_clear(keep_pinned=True, user=None):
+    """Bulk clear (#70): pinned items survive by default. Scoped per user (#120)."""
     with _clip_lock:
+        h = _hist(user)
         if keep_pinned:
-            _clip_history[:] = [it for it in _clip_history if it.get("pinned")]
+            h[:] = [it for it in h if it.get("pinned")]
         else:
-            _clip_history.clear()
-        _clip_save()
+            h.clear()
+        _clip_save(user)
 
 
-def clip_sync(since_id):
+def clip_sync(since_id, user=None):
     """Desktop→phone push channel (#72): served only while the opt-in
     toggle is on (consent lives in the More sheet, stored in state).
     Returns the newest items after `since_id` for the phone to write into
-    navigator.clipboard (best-effort, poll every 5 s while visible)."""
+    navigator.clipboard (best-effort, poll every 5 s while visible).
+    Scoped per user (#120)."""
     try:
         from . import state
 
@@ -474,7 +544,7 @@ def clip_sync(since_id):
     if not enabled:
         return {"enabled": False, "items": []}
     with _clip_lock:
-        items = list(_clip_history)
+        items = list(_hist(user))
     if since_id:
         idx = next((i for i, it in enumerate(items) if it["id"] == since_id), None)
         # an unknown/trimmed since id falls back to the newest item so the
@@ -491,9 +561,11 @@ def clip_sync(since_id):
 
 
 def flush():
-    """Persist pending state before shutdown (#25)."""
+    """Persist every live history before shutdown (#25)."""
     with _clip_lock:
-        _clip_save()
+        for ns, h in _histories.items():
+            user = None if ns is None else ns
+            _clip_save_file(_hist_file(user), h)
 
 
 def clipboard_watcher(stop_event=None):

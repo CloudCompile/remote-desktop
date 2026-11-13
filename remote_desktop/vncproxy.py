@@ -98,6 +98,103 @@ def _connect(timeout=5):
     return socket.create_connection((config.VNC_HOST, config.VNC_PORT), timeout=timeout)
 
 
+# ---------------------------------------------------------------- VNC auth (#122)
+
+
+class VncAuthError(Exception):
+    """Upstream VNC refused or lacked the configured authentication.
+    Fail closed: the proxy connection is dropped (#122)."""
+
+
+def _vnc_recv_exact(target, n, what):
+    buf = b""
+    target.settimeout(5)
+    while len(buf) < n:
+        chunk = target.recv(n - len(buf))
+        if not chunk:
+            raise VncAuthError(f"upstream closed during VNC handshake ({what})")
+        buf += chunk
+    return buf
+
+
+def _vnc_upstream_handshake(target, password):
+    """Perform the RFB version/security handshake with the upstream and
+    authenticate with the configured VNC password (classic VNC auth,
+    security type 2, #122). Returns the negotiated version line.
+
+    Fail closed (#122): when a password is configured the upstream MUST
+    offer VNC auth and the result must be OK, or the connection dies."""
+    from . import _des
+
+    ver = _vnc_recv_exact(target, 12, "version")
+    if not ver.startswith(b"RFB "):
+        raise VncAuthError("upstream did not speak RFB")
+    target.sendall(b"RFB 003.008\n")
+    n = _vnc_recv_exact(target, 1, "security types")[0]
+    types = set(_vnc_recv_exact(target, n, "security type list"))
+    if 2 not in types:
+        raise VncAuthError(
+            "upstream VNC offers no password authentication (security type 2 missing); "
+            "a configured VNC_PASSWORD would be silently unused — refusing (fail closed)"
+        )
+    target.sendall(b"\x02")
+    challenge = _vnc_recv_exact(target, 16, "challenge")
+    key = _des.vnc_key(password.encode())
+    response = b"".join(_des.encrypt_block(key, challenge[i : i + 8]) for i in (0, 8))
+    target.sendall(response)
+    result = int.from_bytes(_vnc_recv_exact(target, 4, "security result"), "big")
+    if result != 0:
+        # 1 = failed, 2 = too many
+        raise VncAuthError(
+            "upstream VNC rejected the configured password" + (" (too many tries)" if result == 2 else "")
+        )
+    return ver
+
+
+def _vnc_client_handshake(handler, target):
+    """Consume the CLIENT's RFB handshake and answer it ourselves
+    (security type None — the proxy already authenticated upstream),
+    relay ClientInit/ServerInit, then leave the rest raw (#122)."""
+    client = handler.connection
+    client.settimeout(10)
+    ver = b""
+    while not ver.endswith(b"\n"):
+        chunk = client.recv(12 - len(ver))
+        if not chunk:
+            raise VncAuthError("client closed during VNC handshake")
+        ver += chunk
+    target.sendall(b"RFB 003.008\n")
+    # offer exactly one security type: None (proxy-side auth is done)
+    client.sendall(b"\x01\x01")
+    client.recv(1)  # the client's choice (must be 1; noVNC picks it)
+    # ClientInit -> upstream
+    init = client.recv(1)
+    if not init:
+        raise VncAuthError("client closed before ClientInit")
+    target.sendall(init)
+    # ServerInit: 24 fixed bytes + name
+    server_init = _vnc_recv_exact(target, 24, "ServerInit")
+    name_len = int.from_bytes(server_init[20:24], "big")
+    name = _vnc_recv_exact(target, min(name_len, 4096), "ServerInit name") if name_len else b""
+    client.sendall(b"RFB 003.008\n" + b"\x01\x01" + b"\x01" + server_init + name)
+
+
+def _connect_authenticated(password, on_fail=None):
+    """Connect (+ VNC-auth when configured, #122). Returns the socket or
+    raises VncAuthError/socket error."""
+    target = _connect()
+    if password:
+        try:
+            _vnc_upstream_handshake(target, password)
+        except Exception:
+            try:
+                target.close()
+            except OSError:
+                pass
+            raise
+    return target
+
+
 def _client_writable(conn, timeout):
     try:
         _, w, _ = select.select([], [conn], [], timeout)
@@ -177,15 +274,41 @@ def websocket_proxy(handler):
     if not key or "upgrade" not in (handler.headers.get("Connection", "") + "").lower():
         handler._json(400, {"error": "expected websocket upgrade"})
         return
+    # #112/#125: the websocket proxy is an endpoint like any other — it
+    # requires an authenticated session (checked BEFORE touching VNC).
+    if not handler._authed():
+        handler._json(401, {"ok": False, "error": "unauthorized"})
+        return
     if not limits.gate(handler, "ws", "websocket proxies"):
         return
+    # VNC auth (#122): when a VNC password is configured the proxy
+    # performs the upstream RFB handshake itself (fail closed on any
+    # auth problem) and answers the client's handshake with type None.
+    password = config.VNC_PASSWORD
     try:
-        target = _connect()
+        target = _connect_authenticated(password)
+    except VncAuthError as e:
+        limits.release("ws")
+        log.log(f"VNC auth failed: {e}", peer=handler.client_address[0])
+        handler._json(502, {"error": f"VNC authentication failed: {e}"})
+        return
     except Exception as e:
         limits.release("ws")
         log.log(f"VNC connect failed ({config.VNC_HOST}:{config.VNC_PORT}): {e}")
         handler._json(502, {"error": f"cannot reach VNC server {config.VNC_HOST}:{config.VNC_PORT}"})
         return
+    if password:
+        try:
+            _vnc_client_handshake(handler, target)
+        except Exception as e:
+            limits.release("ws")
+            try:
+                target.close()
+            except OSError:
+                pass
+            log.log(f"VNC client handshake failed: {e}", peer=handler.client_address[0])
+            handler._json(502, {"error": "VNC handshake failed"})
+            return
 
     handler.send_response(101)
     handler.send_header("Upgrade", "websocket")
@@ -267,7 +390,13 @@ def websocket_proxy(handler):
                 time.sleep(backoff)
                 backoff = min(backoff * 2, _BACKOFF_MAX)
                 try:
-                    new_target = _connect()
+                    # re-authenticate the new upstream connection too (#122)
+                    new_target = _connect_authenticated(password)
+                    break
+                except VncAuthError as e:
+                    log.log(f"ws proxy: reconnect auth failed (fail closed): {e}")
+                    attempt = retries_left  # a wrong password will not fix itself
+                    new_target = None
                     break
                 except Exception as e:
                     log.log(f"ws proxy: reconnect attempt failed: {e}")

@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from . import (
     apps,
     audio,
+    audit,
     auth,
     clipboard,
     config,
@@ -30,16 +31,161 @@ from . import (
     limits,
     logging as log,
     media_in,
+    notify,
     procs,
     ready,
     state,
     stats,
     store,
+    totp,
+    users,
     vncproxy,
+    webauthn,
     windows,
 )
 
 WEB_DIR = config.WEB_DIR
+
+# ------------------------------------------------------------- capability table (#112)
+#
+# Every /api route declares the capability level it needs; the request's
+# role level (viewer=1 < operator=2 < admin=3) must meet or exceed it.
+# Unmapped /api paths FAIL CLOSED at admin level, so a forgotten entry
+# cannot silently become world-accessible (#112).
+
+CAP_VIEW, CAP_OPERATE, CAP_ADMIN = users.ROLE_LEVEL["viewer"], users.ROLE_LEVEL["operator"], users.ROLE_LEVEL["admin"]
+
+_GET_CAPS = {
+    "/api/auth_check": CAP_VIEW,
+    "/api/windows": CAP_VIEW,
+    "/api/window/thumbnail": CAP_VIEW,
+    "/api/apps": CAP_VIEW,
+    "/api/store/backend": CAP_VIEW,
+    "/api/store/collections": CAP_VIEW,
+    "/api/store": CAP_VIEW,
+    "/api/store/search": CAP_VIEW,
+    "/api/store/status": CAP_VIEW,
+    "/api/audio/status": CAP_VIEW,
+    "/api/audio/sinks": CAP_VIEW,
+    "/api/audio/apps": CAP_VIEW,
+    "/api/audio/diagnostics": CAP_VIEW,
+    "/api/audio/record": CAP_VIEW,
+    "/api/audio/recordings": CAP_VIEW,
+    "/api/media/status": CAP_VIEW,
+    "/api/clipboard": CAP_VIEW,
+    "/api/clipboard/history": CAP_VIEW,
+    "/api/clipboard/sync": CAP_VIEW,
+    "/api/clipboard/image": CAP_VIEW,
+    "/api/settings": CAP_VIEW,
+    "/api/custom-apps": CAP_VIEW,
+    "/api/pins": CAP_VIEW,
+    "/api/audio/test": CAP_OPERATE,
+    "/api/mic": CAP_OPERATE,
+    "/api/mic/status": CAP_VIEW,
+    "/api/camera": CAP_OPERATE,
+    "/api/camera/status": CAP_VIEW,
+    "/api/audio.raw": CAP_VIEW,
+    "/api/audio.opus": CAP_VIEW,
+    "/api/stats": CAP_VIEW,
+    "/api/files": CAP_VIEW,
+    "/api/files/roots": CAP_VIEW,
+    "/api/files/search": CAP_VIEW,
+    "/api/files/content": CAP_VIEW,
+    "/api/files/thumb": CAP_VIEW,
+    "/api/files/audit": CAP_ADMIN,
+    "/api/files/upload/status": CAP_VIEW,
+    "/api/files/transfers": CAP_VIEW,
+    "/api/download": CAP_VIEW,
+    "/api/backup": CAP_ADMIN,
+    # v2.6.0: account surface is self-service (any role); admin is admin
+    "/api/csrf": CAP_VIEW,
+    "/api/account": CAP_VIEW,
+    "/api/sessions": CAP_VIEW,
+    "/api/notify": CAP_VIEW,
+    "/api/2fa": CAP_VIEW,
+    "/api/2fa/qr": CAP_VIEW,
+    "/api/admin/users": CAP_ADMIN,
+    "/api/admin/audit": CAP_ADMIN,
+    "/api/admin/audit/verify": CAP_ADMIN,
+    "/api/admin/keys": CAP_ADMIN,
+}
+
+_POST_CAPS = {
+    "/share": CAP_VIEW,  # OS share-target form POST; origin-checked (#116)
+    "/api/fit": CAP_OPERATE,
+    "/api/window/action": CAP_OPERATE,
+    "/api/geometry": CAP_OPERATE,
+    "/api/settings": CAP_OPERATE,
+    "/api/audio/sink": CAP_OPERATE,
+    "/api/audio/volume": CAP_OPERATE,
+    "/api/audio/app-volume": CAP_OPERATE,
+    "/api/media/keys": CAP_OPERATE,
+    "/api/audio/record": CAP_OPERATE,
+    "/api/resize": CAP_OPERATE,
+    "/api/open/": CAP_OPERATE,  # prefix
+    "/api/paste": CAP_OPERATE,
+    "/api/clipboard/set": CAP_OPERATE,
+    "/api/clipboard/paste": CAP_OPERATE,
+    "/api/clipboard/pin": CAP_OPERATE,
+    "/api/clipboard/tag": CAP_OPERATE,
+    "/api/clipboard/item": CAP_VIEW,
+    "/api/clipboard/remove": CAP_OPERATE,
+    "/api/clipboard/clear": CAP_OPERATE,
+    "/api/store/install": CAP_ADMIN,
+    "/api/store/remove": CAP_ADMIN,
+    "/api/store/update": CAP_ADMIN,
+    "/api/store/cancel": CAP_OPERATE,
+    "/api/custom-apps": CAP_OPERATE,
+    "/api/pins/folder": CAP_OPERATE,
+    "/api/pins/assign": CAP_OPERATE,
+    "/api/pins/reorder": CAP_OPERATE,
+    "/api/launches/clear": CAP_OPERATE,
+    "/api/launch": CAP_OPERATE,
+    "/api/store/launch": CAP_OPERATE,
+    "/api/upload": CAP_OPERATE,
+    "/api/files/delete": CAP_OPERATE,
+    "/api/files/mkdir": CAP_OPERATE,
+    "/api/files/rename": CAP_OPERATE,
+    "/api/files/move": CAP_OPERATE,
+    "/api/files/copy": CAP_OPERATE,
+    "/api/files/chmod": CAP_OPERATE,
+    "/api/files/archive": CAP_OPERATE,
+    "/api/files/extract": CAP_OPERATE,
+    "/api/files/upload/init": CAP_OPERATE,
+    "/api/files/upload/chunk": CAP_OPERATE,
+    "/api/files/upload/complete": CAP_OPERATE,
+    "/api/files/upload/cancel": CAP_OPERATE,
+    "/api/files/transfers/": CAP_OPERATE,  # prefix
+    "/api/pins/toggle": CAP_OPERATE,
+    "/api/backup": CAP_ADMIN,
+    # v2.6.0: self-service + admin
+    "/api/account/password": CAP_VIEW,
+    "/api/2fa/setup": CAP_VIEW,
+    "/api/2fa/enable": CAP_VIEW,
+    "/api/2fa/disable": CAP_VIEW,
+    "/api/2fa/recovery/regenerate": CAP_VIEW,
+    "/api/sessions/revoke": CAP_VIEW,
+    "/api/sessions/revoke-all": CAP_VIEW,
+    "/api/notify/test": CAP_VIEW,
+    "/api/admin/user": CAP_ADMIN,
+    "/api/admin/users": CAP_ADMIN,
+    "/api/admin/keys/rotate": CAP_ADMIN,
+    "/api/webauthn/register/options": CAP_VIEW,
+    "/api/webauthn/register/verify": CAP_VIEW,
+}
+
+_DELETE_CAPS = {
+    "/api/custom-apps": CAP_OPERATE,
+    "/api/pins/folder": CAP_OPERATE,
+    "/api/admin/users": CAP_ADMIN,
+    "/api/webauthn/credentials": CAP_VIEW,
+}
+
+# state-changing requests that CANNOT carry a CSRF token by design (#116):
+# login (no session yet), logout (stale-session escape hatch) and the PWA
+# share-target form POST (sent by the OS, no custom headers possible).
+# All three are still subject to Origin/Sec-Fetch-Site validation.
+CSRF_EXEMPT = ("/api/login", "/api/logout", "/share")
 
 
 class BoundedThreadingHTTPServer(ThreadingHTTPServer):
@@ -91,6 +237,23 @@ def _reject_503(request):
 
 
 class Handler(http.BaseHandler):
+    # ---- role enforcement (#112): every request resolves its required
+    # capability from the tables above; unmapped /api paths fail closed.
+    def _cap_needed(self, path, table):
+        if path in table:
+            return table[path]
+        for prefix, cap in table.items():
+            if prefix.endswith("/") and path.startswith(prefix):
+                return cap
+        return CAP_ADMIN  # fail closed
+
+    def _require(self, cap):
+        """403 + audit when the role is below `cap` (#112)."""
+        if (getattr(self, "cap", 0) or 0) >= cap:
+            return None
+        audit.event(audit.SECURITY, "role_denied", handler=self, target=self.path, result="denied")
+        return self._json(403, {"ok": False, "error": "forbidden: your role does not allow this action"})
+
     # ---- streaming audio (needs custom response, not _json)
     def _stream_audio(self, codec, bitrate=audio.BITRATE_DEFAULT, shared=None):
         """Chunked audio stream (#14). The encoder process is shared per
@@ -133,8 +296,18 @@ class Handler(http.BaseHandler):
         url = urlparse(self.path)
         path = url.path
 
-        # websocket upgrade for the VNC stream (same origin, same port)
+        # websocket upgrade for the VNC stream (same origin, same port):
+        # malformed upgrade attempts are answered first (400, no auth
+        # surface), then the session check (#112/#125)
         if path == "/websockify" or path.startswith("/websockify/"):
+            key = self.headers.get("Sec-WebSocket-Key")
+            if not key or "upgrade" not in (self.headers.get("Connection", "") + "").lower():
+                return self._json(400, {"error": "expected websocket upgrade"})
+            if not self._authed():
+                return self._json(401, {"ok": False, "error": "unauthorized"})
+            r = self._require(CAP_OPERATE)
+            if r:
+                return r
             return vncproxy.websocket_proxy(self)
 
         # public endpoints
@@ -151,6 +324,9 @@ class Handler(http.BaseHandler):
         if path.startswith("/api/"):
             if not self._authed():
                 return self._json(401, {"ok": False, "error": "unauthorized"})
+            r = self._require(self._cap_needed(path, _GET_CAPS))
+            if r:
+                return r
             try:
                 return self._dispatch_api_get(url, path)
             except files.FilesError as e:  # #79+: client-safe file errors
@@ -186,8 +362,88 @@ class Handler(http.BaseHandler):
 
     def _dispatch_api_get(self, url, path):
         """Authenticated GET /api/* routes."""
-        if path == "/api/auth_check":
-            return self._json(200, {"ok": True})
+        if path == "/api/auth_check":  # #112: capabilities for the UI
+            return self._json(
+                200,
+                {
+                    "ok": True,
+                    "user": getattr(self, "user", ""),
+                    "role": getattr(self, "role", ""),
+                    "caps": {"view": True, "operate": self.cap >= CAP_OPERATE, "admin": self.cap >= CAP_ADMIN},
+                    "sessions": {"current": (getattr(self, "sid", "") or "")[:12]},
+                },
+            )
+        if path == "/api/csrf":  # #116: per-session CSRF token (+ cookie mirror)
+            tok = auth.csrf_token(getattr(self, "sid", "") or "")
+            return self._json(200, {"ok": True, "token": tok}, extra={"Set-Cookie": auth.csrf_cookie_header(tok)})
+        if path == "/api/account":  # #109/#118/#123: self-service security settings
+            from . import users as _u
+
+            rec = _u.record(self.user) or {}
+            t = rec.get("totp") or {}
+            return self._json(
+                200,
+                {
+                    "ok": True,
+                    "user": self.user,
+                    "role": self.role,
+                    "created": rec.get("created") or 0,
+                    "last_login": rec.get("last_login") or 0,
+                    "totp": {"enabled": bool(t.get("enabled")), "required": bool(config.TOTP_REQUIRED)},
+                    "recovery_codes_left": len(rec.get("recovery") or []),
+                    "passkeys": webauthn.credentials_for(self.user) if webauthn.enabled() else [],
+                    "notify": {"enabled": bool(config.NOTIFY_ENABLED), "failed_24h": notify.failed_attempts(self.user)},
+                    "failed_24h": notify.failed_attempts(self.user),
+                },
+            )
+        if path == "/api/sessions":  # #114: device list (no raw tokens)
+            return self._json(200, {"ok": True, "sessions": auth.sessions_public(user=self.user, current_sid=self.sid)})
+        if path == "/api/notify":  # #123: unread alerts (marks them seen)
+            return self._json(
+                200, {"ok": True, "notifications": notify.unread(self.user), "devices": notify.known_devices(self.user)}
+            )
+        if path == "/api/2fa":  # #109: enrollment status
+            t = users.totp_get(self.user)
+            return self._json(
+                200,
+                {
+                    "ok": True,
+                    "enabled": t["enabled"],
+                    "recovery_left": len(users.recovery_hashes(self.user)),
+                    "required": bool(config.TOTP_REQUIRED),
+                },
+            )
+        if path == "/api/2fa/qr":  # #109: QR of the pending otpauth URI (SVG)
+            if not _qr_available():
+                return self._json(501, {"ok": False, "error": "QR rendering unavailable; use the manual secret"})
+            secret = _totp_pending_secret(self.user)
+            if not secret:
+                return self._json(404, {"ok": False, "error": "no pending enrollment; call /api/2fa/setup first"})
+            uri = totp.otpauth_uri(self.user, secret)
+            svg = _qr_svg(uri)
+            self.send_response(200)
+            self.send_header("Content-Type", "image/svg+xml")
+            self.send_header("Content-Length", str(len(svg)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if not getattr(self, "_head_only", False):
+                self.wfile.write(svg)
+            return
+        if path == "/api/admin/audit":  # #113: read/filter for admins
+            q = parse_qs(url.query)
+            events = audit.read(
+                kind=q.get("kind", [None])[0],
+                q=q.get("q", [None])[0],
+                limit=min(max(int(q.get("limit", ["200"])[0]), 1), 1000),
+            )
+            return self._json(200, {"ok": True, "events": events})
+        if path == "/api/admin/audit/verify":  # #113: chain verification
+            ok, first_bad, checked = audit.verify()
+            return self._json(200, {"ok": True, "chain_ok": ok, "first_bad": first_bad, "checked": checked})
+        if path == "/api/admin/users":  # #111: account list (no hashes)
+            return self._json(200, {"ok": True, "users": users.list_public()})
+        if path == "/api/admin/keys":  # #118: signing-key version
+            return self._json(200, {"ok": True, "key_version": auth.key_version()})
         if path == "/api/windows":
             try:
                 return self._json(
@@ -351,7 +607,7 @@ class Handler(http.BaseHandler):
         # ---- files & transfer (#78/#79/#81/#83/#84/#88/#89/#90/#92)
         if path == "/api/files":
             q = parse_qs(url.query)
-            root = files.resolve_root(q.get("root", [""])[0])
+            root = files.resolve_root(q.get("root", [""])[0], user=self.user, cap=self.cap)
             if root is None:
                 return self._json(404, {"ok": False, "error": "no such root"})
             d = files.list_dir(
@@ -377,7 +633,7 @@ class Handler(http.BaseHandler):
             return self._json(200, {"ok": True, "roots": files.roots_public(), "errors": files.ROOT_ERRORS})
         if path == "/api/files/search":  # #81: bounded recursive search
             q = parse_qs(url.query)
-            root = files.resolve_root(q.get("root", [""])[0])
+            root = files.resolve_root(q.get("root", [""])[0], user=self.user, cap=self.cap)
             if root is None:
                 return self._json(404, {"ok": False, "error": "no such root"})
             try:
@@ -388,13 +644,13 @@ class Handler(http.BaseHandler):
             return self._json(200, {"ok": True, **r})
         if path == "/api/files/content":  # #83: ranged, streamed download
             q = parse_qs(url.query)
-            root = files.resolve_root(q.get("root", [""])[0])
+            root = files.resolve_root(q.get("root", [""])[0], user=self.user, cap=self.cap)
             if root is None:
                 return self._json(404, {"ok": False, "error": "no such root"})
             return self._file_download(root, q.get("path", [""])[0], inline=q.get("inline", ["0"])[0] == "1")
         if path == "/api/files/thumb":  # #82: bounded cached thumbnail
             q = parse_qs(url.query)
-            root = files.resolve_root(q.get("root", [""])[0])
+            root = files.resolve_root(q.get("root", [""])[0], user=self.user, cap=self.cap)
             if root is None:
                 return self._json(404, {"ok": False, "error": "no such root"})
             try:
@@ -419,7 +675,9 @@ class Handler(http.BaseHandler):
             p = files._safe_file_path(name)
             if not p or not os.path.isfile(p):
                 return self._json(404, {"error": "not found"})
-            return self._file_download(files.default_root(), name, inline=False, legacy=True)
+            return self._file_download(
+                files.default_root(user=self.user, cap=self.cap), name, inline=False, legacy=True
+            )
         if path == "/api/backup":
             return self._json(200, {"ok": True, "backups": state.list_backups()})
         return self._json(404, {"error": "not found"})
@@ -434,11 +692,28 @@ class Handler(http.BaseHandler):
             return self._login()
         if path == "/api/logout":
             return self._json(
-                200, {"ok": True}, extra={"Set-Cookie": "rd_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"}
+                200,
+                {"ok": True},
+                extra={"Set-Cookie": auth.clear_cookie_header(self)},
             )
 
         if not self._authed():
             return self._json(401, {"ok": False, "error": "unauthorized"})
+
+        # CSRF gate (#116): state-changing requests need the session's
+        # token; login/logout/share are exempt (see CSRF_EXEMPT) but all
+        # requests with Origin/Sec-Fetch-Site headers are origin-checked.
+        if path not in CSRF_EXEMPT and not auth._csrf_ok(self):
+            audit.event(audit.SECURITY, "csrf_rejected", handler=self, target=path, result="denied")
+            return self._json(
+                403,
+                {"ok": False, "error": "csrf token missing or invalid"},
+                extra={"X-CSRF-Required": "1"},
+            )
+
+        r = self._require(self._cap_needed(path, _POST_CAPS))
+        if r:
+            return r
 
         try:
             if path == "/share":  # #87: PWA share-target uploads (multipart)
@@ -524,48 +799,52 @@ class Handler(http.BaseHandler):
                 text = data.get("text", "")
                 if len(text) > 100_000:
                     return self._json(400, {"ok": False, "error": "text too long"})
-                return self._json(200, clipboard.clipboard_set(text))
+                return self._json(200, clipboard.clipboard_set(text, user=self.user))
             if path == "/api/clipboard/paste":
                 data = self._body()
-                it = clipboard.clip_item(data.get("id", ""))
+                it = clipboard.clip_item(data.get("id", ""), self.user)
                 if not it:
                     return self._json(404, {"ok": False, "error": "no such clipboard item"})
                 if it.get("kind") == "image":  # #71: paste images back
                     return self._json(200, clipboard.clipboard_set_image(it))
-                return self._json(200, clipboard.clipboard_set(it["text"]))
+                return self._json(200, clipboard.clipboard_set(it["text"], user=self.user))
             if path == "/api/clipboard/pin":  # #70
                 d = self._body()
-                if not clipboard.clip_pin(d.get("id", ""), bool(d.get("pinned"))):
+                if not clipboard.clip_pin(d.get("id", ""), bool(d.get("pinned")), self.user):
                     return self._json(404, {"ok": False, "error": "no such clipboard item"})
                 return self._json(200, {"ok": True})
             if path == "/api/clipboard/tag":  # #70
                 d = self._body()
-                if not clipboard.clip_tag(d.get("id", ""), d.get("tags", [])):
+                if not clipboard.clip_tag(d.get("id", ""), d.get("tags", []), self.user):
                     return self._json(404, {"ok": False, "error": "no such clipboard item"})
-                return self._json(200, {"ok": True, "tags": clipboard.clip_tags()})
+                return self._json(200, {"ok": True, "tags": clipboard.clip_tags(self.user)})
             if path == "/api/clipboard/item":
-                it = clipboard.clip_item(parse_qs(url.query).get("id", [""])[0])
+                it = clipboard.clip_item(parse_qs(url.query).get("id", [""])[0], self.user)
                 if not it:
                     return self._json(404, {"ok": False, "error": "no such item"})
                 return self._json(200, {"id": it["id"], "text": it["text"]})
             if path == "/api/clipboard/remove":
-                clipboard.clip_remove(self._body().get("id", ""))
+                clipboard.clip_remove(self._body().get("id", ""), self.user)
                 return self._json(200, {"ok": True})
             if path == "/api/clipboard/clear":
-                clipboard.clip_clear(keep_pinned=True)  # #70: bulk clear preserves pins
+                clipboard.clip_clear(keep_pinned=True, user=self.user)  # #70: bulk clear preserves pins
                 return self._json(200, {"ok": True})
             if path == "/api/store/install":
                 data = self._body()
                 pkg = data.get("pkg", "")
                 if not store.valid_pkg_name(pkg):
                     return self._json(400, {"ok": False, "error": "invalid package name"})
-                return self._json(200, store.install_pkg(pkg))
+                r = store.install_pkg(pkg)
+                audit.event(audit.STORE, "install", handler=self, target=pkg, result="ok" if r.get("ok") else "failed")
+                return self._json(200, r)
             if path == "/api/store/remove":  # #66
                 data = self._body()
                 pkg = data.get("pkg", "")
                 if not store.valid_pkg_name(pkg):
                     return self._json(400, {"ok": False, "error": "invalid package name"})
-                return self._json(200, store.remove_pkg(pkg))
+                r = store.remove_pkg(pkg)
+                audit.event(audit.STORE, "remove", handler=self, target=pkg, result="ok" if r.get("ok") else "failed")
+                return self._json(200, r)
             if path == "/api/store/update":  # #66
                 data = self._body()
                 pkg = data.get("pkg", "")
@@ -582,23 +861,23 @@ class Handler(http.BaseHandler):
                 r = apps.add_custom_app(self._body())
                 return self._json(200 if r.get("ok") else 400, r)
             if path == "/api/pins/folder":  # #64
-                r = state.pins_folder_create(self._body().get("name", ""))
+                r = state.pins_folder_create(self._body().get("name", ""), self.user)
                 if r.get("error"):
                     return self._json(400, {"ok": False, **r})
                 return self._json(200, {"ok": True, **r})
             if path == "/api/pins/assign":  # #64: a pin lives in at most one folder
                 d = self._body()
-                r = state.pins_assign(d.get("id", ""), d.get("folder", ""))
+                r = state.pins_assign(d.get("id", ""), d.get("folder", ""), self.user)
                 if r.get("error"):
                     return self._json(400, {"ok": False, **r})
                 return self._json(200, {"ok": True, **r})
             if path == "/api/pins/reorder":  # #64
-                r = state.pins_reorder(self._body().get("ids", []))
+                r = state.pins_reorder(self._body().get("ids", []), self.user)
                 if r is None:
                     return self._json(400, {"ok": False, "error": "ids must be a list"})
                 return self._json(200, {"ok": True, **r})
             if path == "/api/launches/clear":  # #62: clear history, keep pins + apps
-                state.clear_launches()
+                state.clear_launches(self.user)
                 apps._apps_cache.update({"fp": None, "etag": None, "body": b""})
                 return self._json(200, {"ok": True})
             if path == "/api/launch":
@@ -607,6 +886,8 @@ class Handler(http.BaseHandler):
                 if not app_id or len(app_id) > 200 or ".." in app_id or app_id.startswith("/"):
                     return self._json(400, {"ok": False, "error": "invalid app id"})
                 r = apps.launch_desktop(app_id)
+                state.record_launch(app_id, self.user)
+                audit.event(audit.APP, "launch", handler=self, target=app_id, result="ok" if r.get("ok") else "failed")
                 if not r.get("ok"):
                     r["rid"] = self.rid  # #75: correlation id for the log lookup
                 return self._json(200, r)
@@ -619,7 +900,7 @@ class Handler(http.BaseHandler):
                 return self._upload(url)
             if path == "/api/files/delete":  # #79: single name (legacy) or bulk paths
                 d = self._body()
-                root = files.resolve_root(d.get("root", ""))
+                root = files.resolve_root(d.get("root", ""), user=self.user, cap=self.cap)
                 if root is None:
                     root = files.default_root()
                 files.require_writable(root)  # a read-only root refuses the whole batch (#84)
@@ -630,20 +911,20 @@ class Handler(http.BaseHandler):
                 return self._json(200 if r["ok"] else 207, {"ok": r["ok"], **r})
             if path == "/api/files/mkdir":  # #79
                 d = self._body()
-                root = files.resolve_root(d.get("root", ""))
+                root = files.resolve_root(d.get("root", ""), user=self.user, cap=self.cap)
                 r = files.mkdir(root, d.get("path", ""))
                 files.audit("mkdir", self, root=root, path=r.get("path"))
                 return self._json(200, {"ok": True, **r})
             if path == "/api/files/rename":  # #79
                 d = self._body()
-                root = files.resolve_root(d.get("root", ""))
+                root = files.resolve_root(d.get("root", ""), user=self.user, cap=self.cap)
                 r = files.rename(root, d.get("path", ""), d.get("name", ""))
                 files.audit("rename", self, root=root, path=d.get("path"), dest=r.get("path"))
                 return self._json(200, {"ok": True, **r})
             if path in ("/api/files/move", "/api/files/copy"):  # #79
                 d = self._body()
-                root = files.resolve_root(d.get("root", ""))
-                root2 = files.resolve_root(d.get("root2", "")) or root
+                root = files.resolve_root(d.get("root", ""), user=self.user, cap=self.cap)
+                root2 = files.resolve_root(d.get("root2", ""), user=self.user, cap=self.cap) or root
                 action = "copy" if path.endswith("copy") else "move"
                 results = [
                     files.transfer(
@@ -660,7 +941,7 @@ class Handler(http.BaseHandler):
                 return self._json(200, {"ok": True, "results": results})
             if path == "/api/files/chmod":  # #90
                 d = self._body()
-                root = files.resolve_root(d.get("root", ""))
+                root = files.resolve_root(d.get("root", ""), user=self.user, cap=self.cap)
                 try:
                     mode = int(str(d.get("mode", "")), 8)
                 except ValueError:
@@ -670,19 +951,19 @@ class Handler(http.BaseHandler):
                 return self._json(200, {"ok": True, **r})
             if path == "/api/files/archive":  # #85
                 d = self._body()
-                root = files.resolve_root(d.get("root", ""))
+                root = files.resolve_root(d.get("root", ""), user=self.user, cap=self.cap)
                 r = files.archive_create(root, d.get("paths", []), d.get("format", "zip"), d.get("name", ""))
                 files.audit("archive", self, root=root, path=r.get("path"))
                 return self._json(200, {"ok": True, **r})
             if path == "/api/files/extract":  # #85
                 d = self._body()
-                root = files.resolve_root(d.get("root", ""))
+                root = files.resolve_root(d.get("root", ""), user=self.user, cap=self.cap)
                 r = files.archive_extract(root, d.get("path", ""), d.get("dest", ""))
                 files.audit("extract", self, root=root, path=d.get("path"), dest=r.get("dest"))
                 return self._json(200, {"ok": True, **r})
             if path == "/api/files/upload/init":  # #78: resumable session
                 d = self._body()
-                root = files.resolve_root(d.get("root", ""))
+                root = files.resolve_root(d.get("root", ""), user=self.user, cap=self.cap)
                 r = files.upload_init(
                     root,
                     d.get("path", ""),
@@ -707,7 +988,7 @@ class Handler(http.BaseHandler):
                 files.audit(
                     "upload",
                     self,
-                    root=files.resolve_root(r.get("root", "")),
+                    root=files.resolve_root(r.get("root", ""), user=self.user, cap=self.cap),
                     path=r.get("path"),
                     detail={"size": r.get("size")},
                 )
@@ -734,18 +1015,93 @@ class Handler(http.BaseHandler):
                 app_id = self._body().get("id", "")
                 if not app_id or len(app_id) > 200:
                     return self._json(400, {"ok": False, "error": "invalid app id"})
-                pins = state.load_pins()
+                pins = state.load_pins(self.user)
                 if app_id in pins:
                     pins.remove(app_id)
                 else:
                     pins.insert(0, app_id)
-                state.save_pins(pins)
+                state.save_pins(pins, self.user)
                 return self._json(200, {"ok": True, "pins": pins})
             if path == "/api/backup":
                 bdir = state.snapshot(reason="api")
                 if not bdir:
                     return self._json(500, {"ok": False, "error": "backup failed"})
+                audit.event(audit.ADMIN, "backup", handler=self, result="ok")
                 return self._json(200, {"ok": True, "path": bdir, "backups": state.list_backups()})
+            # ------------------------------------------------ v2.6.0 security (#109-#123)
+            if path == "/api/account/password":  # #118: rotate without downtime
+                return self._account_password()
+            if path == "/api/2fa/setup":  # #109: stage a TOTP secret
+                secret = totp.generate_secret()
+                if not users.totp_set_pending(self.user, secret):
+                    return self._json(500, {"ok": False, "error": "cannot stage secret"})
+                audit.event(audit.SECURITY, "2fa_setup", handler=self, target=self.user)
+                return self._json(200, {"ok": True, "secret": secret, "uri": totp.otpauth_uri(self.user, secret)})
+            if path == "/api/2fa/enable":  # #109: activate + show recovery codes once
+                d = self._body()
+                rec = users.record(self.user) or {}
+                pending = (rec.get("totp") or {}).get("pending")
+                if not pending or not totp.verify(pending, str(d.get("code", ""))):
+                    audit.event(audit.SECURITY, "2fa_enable", handler=self, target=self.user, result="failed")
+                    return self._json(400, {"ok": False, "error": "invalid code; check the clock and try again"})
+                if not users.totp_enable(self.user, pending):
+                    return self._json(500, {"ok": False, "error": "cannot enable"})
+                codes = totp.generate_recovery_codes()
+                hashes = [totp.hash_recovery_code(c) for c in codes]
+                users.recovery_set(self.user, [h for h in hashes if h])
+                audit.event(audit.SECURITY, "2fa_enabled", handler=self, target=self.user)
+                return self._json(200, {"ok": True, "recovery_codes": codes})
+            if path == "/api/2fa/disable":  # #109: requires the current factor
+                d = self._body()
+                rec = users.record(self.user) or {}
+                t = rec.get("totp") or {}
+                if not auth.verify_user_password(self.user, str(d.get("password", ""))):
+                    audit.event(audit.SECURITY, "2fa_disable", handler=self, target=self.user, result="failed")
+                    return self._json(401, {"ok": False, "error": "password required"})
+                if t.get("enabled") and not totp.verify(t.get("secret") or "", str(d.get("code", ""))):
+                    audit.event(audit.SECURITY, "2fa_disable", handler=self, target=self.user, result="failed")
+                    return self._json(401, {"ok": False, "error": "current 2FA code required"})
+                users.totp_disable(self.user)
+                audit.event(audit.SECURITY, "2fa_disabled", handler=self, target=self.user)
+                return self._json(200, {"ok": True})
+            if path == "/api/2fa/recovery/regenerate":  # #109: fresh codes invalidate the old
+                d = self._body()
+                rec = users.record(self.user) or {}
+                t = rec.get("totp") or {}
+                if not t.get("enabled") or not totp.verify(t.get("secret") or "", str(d.get("code", ""))):
+                    return self._json(401, {"ok": False, "error": "current 2FA code required"})
+                codes = totp.generate_recovery_codes()
+                users.recovery_set(self.user, [h for h in (totp.hash_recovery_code(c) for c in codes) if h])
+                audit.event(audit.SECURITY, "2fa_recovery_regenerated", handler=self, target=self.user)
+                return self._json(200, {"ok": True, "recovery_codes": codes})
+            if path == "/api/sessions/revoke":  # #114
+                d = self._body()
+                n = auth.session_revoke(str(d.get("id", ""))[:64], user=self.user)
+                if not n:
+                    return self._json(404, {"ok": False, "error": "no such session"})
+                audit.event(audit.SESSION, "revoke", handler=self, target=d.get("id", "")[:12])
+                return self._json(200, {"ok": True, "revoked": n})
+            if path == "/api/sessions/revoke-all":  # #114: everything but this device
+                d = self._body()
+                n = auth.session_revoke_user(self.user, except_prefix=getattr(self, "sid", "") or None)
+                audit.event(audit.SESSION, "revoke_all", handler=self, target=self.user, detail={"count": n})
+                return self._json(200, {"ok": True, "revoked": n})
+            if path == "/api/notify/test":  # #123
+                notify.test_event(self.user)
+                return self._json(200, {"ok": True, "msg": "test notification queued; it appears on the next visit"})
+            if path == "/api/admin/user":  # #111: create/update one account
+                d = self._body()
+                return self._admin_user(d)
+            if path == "/api/admin/keys/rotate":  # #118: global signing-key rotation
+                d = self._body()
+                keep = d.get("keep_sessions") is True
+                v = auth.rotate_key(reason=f"rotate by {self.user}", revoke_all=not keep)
+                audit.event(audit.ADMIN, "key_rotate", handler=self, target=f"v{v}", result="ok")
+                return self._json(200, {"ok": True, "key_version": v})
+            if path == "/api/webauthn/register/options":  # #110 (gated)
+                return self._webauthn_guard(lambda: webauthn.registration_options(self.user, self))
+            if path == "/api/webauthn/register/verify":
+                return self._webauthn_guard(lambda: webauthn.registration_verify(self.user, self, self._body()))
             return self._json(404, {"error": "not found"})
         except files.FilesError as e:
             return self._json(e.status, {"ok": False, "error": str(e)})
@@ -762,14 +1118,33 @@ class Handler(http.BaseHandler):
         path = url.path
         if not self._authed():
             return self._json(401, {"ok": False, "error": "unauthorized"})
+        if path not in CSRF_EXEMPT and not auth._csrf_ok(self):  # #116
+            audit.event(audit.SECURITY, "csrf_rejected", handler=self, target=path, result="denied")
+            return self._json(403, {"ok": False, "error": "csrf token missing or invalid"})
+        r = self._require(self._cap_needed(path, _DELETE_CAPS))
+        if r:
+            return r
         try:
             if path == "/api/custom-apps":  # #63
                 r = apps.delete_custom_app(parse_qs(url.query).get("id", [""])[0])
                 return self._json(200 if r.get("ok") else 404, r)
             if path == "/api/pins/folder":  # #64: pins stay pinned under Unfiled
                 return self._json(
-                    200, {"ok": True, **state.pins_folder_delete(parse_qs(url.query).get("name", [""])[0])}
+                    200, {"ok": True, **state.pins_folder_delete(parse_qs(url.query).get("name", [""])[0], self.user)}
                 )
+            if path == "/api/admin/users":  # #111: delete an account
+                username = parse_qs(url.query).get("username", [""])[0].strip()
+                ok, err = users.delete(username)
+                if ok:
+                    auth.session_revoke_user(username)
+                audit.event(audit.ADMIN, "user_delete", handler=self, target=username, result="ok" if ok else "failed")
+                return self._json(200 if ok else 400, {"ok": ok, "error": err})
+            if path == "/api/webauthn/credentials":  # #110: remove one passkey
+                n, err = webauthn.remove_credential(self.user, parse_qs(url.query).get("id", [""])[0])
+                if err:
+                    return self._json(404, {"ok": False, "error": err})
+                audit.event(audit.SECURITY, "passkey_removed", handler=self, target=self.user)
+                return self._json(200, {"ok": True, "removed": n})
             return self._json(404, {"error": "not found"})
         except Exception as e:
             log.log(f"DELETE {path} error: {e}")
@@ -777,12 +1152,15 @@ class Handler(http.BaseHandler):
 
     def _upload(self, url):
         """Legacy single-shot upload (v2.0.1): atomic temp+rename (#15),
-        now also quota/reserve-checked and root-aware (#84/#89)."""
+        now also quota/reserve-checked, root-aware (#84/#89) and
+        user-scoped (#120: the file lands in the requesting user's root)."""
         name = os.path.basename(parse_qs(url.query).get("name", [""])[0])[:200]
-        p = files._safe_file_path(name)
+        root = files.default_root(user=self.user, cap=self.cap)
+        if root is None:
+            return self._json(404, {"ok": False, "error": "no such root"})
+        p = files._safe_file_path_in(root.path, name)
         if not p:
             return self._json(400, {"ok": False, "error": "invalid filename"})
-        root = files.default_root()
         try:
             remaining = int(self.headers.get("Content-Length", "0") or 0)
         except ValueError:
@@ -794,11 +1172,11 @@ class Handler(http.BaseHandler):
             files.quota_check(root, remaining)  # #89: refuse BEFORE writing
         except files.FilesError as e:
             return self._json(e.status, {"ok": False, "error": str(e)})
-        os.makedirs(files.FILES_DIR, exist_ok=True)
+        os.makedirs(root.path, exist_ok=True)
         # atomic upload (#15): stream to a hidden temp file in the same
         # directory, fsync, then rename over the target so a crash or
         # full disk can never leave a truncated "real" file behind
-        tmp = os.path.join(files.FILES_DIR, f".upload-{os.getpid()}-{int(time.time() * 1000)}.part")
+        tmp = os.path.join(root.path, f".upload-{os.getpid()}-{int(time.time() * 1000)}.part")
         n = 0
         try:
             with open(tmp, "wb") as f:
@@ -950,7 +1328,9 @@ class Handler(http.BaseHandler):
         from urllib.parse import parse_qs as _pqs
 
         q = _pqs(urlparse(self.path).query)
-        root = files.resolve_root(q.get("root", [""])[0]) or files.default_root()
+        root = files.resolve_root(q.get("root", [""])[0], user=self.user, cap=self.cap) or files.default_root(
+            user=self.user, cap=self.cap
+        )
         try:
             files.require_writable(root)
         except files.FilesError as e:
@@ -1040,27 +1420,208 @@ class Handler(http.BaseHandler):
         return self._json(200 if rc == 0 else 500, {"ok": rc == 0, "error": None if rc == 0 else err[:200]})
 
     def _login(self):
+        """Multi-user login (#111): rate limit -> password -> TOTP/recovery
+        (#109) -> session create (#114) -> cookies (#119) -> CSRF token
+        (#116) -> audit (#113) -> notifications (#123)."""
         ip = auth._client_ip(self)
+        if not auth.origin_ok(self):  # #116: cross-origin login refused
+            audit.event(audit.SECURITY, "login", handler=self, target=self.path, result="cross-origin")
+            return self._json(403, {"ok": False, "error": "cross-origin login refused"})
         if not auth._login_allowed(ip):
             log.log(f"login rate-limited: {ip}")
+            audit.event(audit.AUTH, "login", handler=self, result="rate-limited")
             return self._json(429, {"ok": False, "error": "too many attempts, wait 10 minutes"})
         try:
             data = self._body()
         except Exception:
             return self._json(400, {"ok": False, "error": "bad request"})
-        auth.LOGIN_ATTEMPTS.setdefault(ip, []).append(time.time())
-        if data.get("username") == auth.AUTH_USER and auth._verify_password(data.get("password", "")):
-            log.log(f"login ok: {ip}")
+        username = str(data.get("username", "")).strip()[:64]
+        password = str(data.get("password", ""))
+        code = str(data.get("code") or data.get("totp") or "").strip()
+
+        if not auth.verify_user_password(username, password):
+            auth.record_login_fail(ip, username)  # #115: persistent + fail2ban event
+            audit.event(audit.AUTH, "login", user=username, handler=self, target=ip, result="failed")
+            log.log(f"login failed: {ip}")
+            return self._json(401, {"ok": False})
+
+        # second factor (#109): required when enrolled (or globally enforced)
+        rec = users.record(username) or {}
+        t = rec.get("totp") or {}
+        if t.get("enabled"):
+            secret = t.get("secret") or ""
+            if not code:
+                log.log(f"login 2fa required: {ip}")
+                return self._json(
+                    401, {"ok": False, "needs_2fa": True, "error": "enter the 6-digit code from your authenticator app"}
+                )
+            if not totp.verify(secret, code):
+                used_recovery = users.recovery_consume(username, code)  # one-time codes (#109)
+                if not used_recovery:
+                    auth.record_login_fail(ip, username)
+                    audit.event(audit.AUTH, "login_2fa", user=username, handler=self, result="failed")
+                    return self._json(401, {"ok": False, "needs_2fa": True, "error": "invalid 2FA code"})
+                audit.event(audit.AUTH, "login_recovery", user=username, handler=self, result="ok")
+        elif config.TOTP_REQUIRED:
             return self._json(
-                200,
-                {"ok": True},
-                extra={
-                    "Set-Cookie": f"rd_session={auth._make_token(auth.AUTH_USER)}; Path=/; HttpOnly; "
-                    f"SameSite=Lax; Max-Age={auth.TOKEN_TTL}"
+                403,
+                {
+                    "ok": False,
+                    "error": "two-factor authentication is enforced (RD_2FA_REQUIRED) but this account has none; "
+                    "an admin must enroll it first",
                 },
             )
-        log.log(f"login failed: {ip}")
-        return self._json(401, {"ok": False})
+
+        if not users.is_active(username):  # disabled account (#111)
+            audit.event(audit.AUTH, "login", user=username, handler=self, result="disabled")
+            return self._json(401, {"ok": False, "error": "account disabled"})
+
+        users.ensure_layout(username)  # per-user state dirs (#120)
+        sid, token = auth.session_create(username, self)
+        users.touch_last_login(username)
+        auth.LOGIN_ATTEMPTS.pop(ip, None)  # a success clears this IP's counter
+        auth.rate_save()
+        csrf = auth.csrf_token(sid)
+        audit.event(audit.AUTH, "login", user=username, handler=self, target=ip, result="ok")
+        notify.on_login(username, self)  # never blocks (#123)
+        log.log(f"login ok: {ip}")
+        return self._json(
+            200,
+            {"ok": True, "user": username, "role": rec.get("role") or "admin", "csrf": csrf},
+            extra={
+                "Set-Cookie": [auth.cookie_header(self, token), auth.csrf_cookie_header(csrf)],
+                "X-CSRF-Token": csrf,
+            },
+        )
+
+    # ---- v2.6.0 helpers
+
+    def _account_password(self):
+        """Authenticated password rotation (#118): no restart, immediate
+        effect, sessions revoked unless the caller keeps them."""
+        d = self._body()
+        current, new = str(d.get("current", "")), str(d.get("new", ""))
+        if not auth.verify_user_password(self.user, current):
+            audit.event(audit.AUTH, "password_change", user=self.user, handler=self, result="failed")
+            return self._json(401, {"ok": False, "error": "current password required"})
+        if len(new) < 8:
+            return self._json(400, {"ok": False, "error": "password must be at least 8 characters"})
+        if users.is_default_admin(self.user):
+            # #118: rotate the signing key first (grace keeps live devices),
+            # then sync .passhash + the store; no restart needed.
+            auth.rotate_key(reason="password change", grace=config.KEY_GRACE, revoke_all=False)
+        ok, err = users.set_password(self.user, new)
+        if not ok:
+            return self._json(500, {"ok": False, "error": err or "cannot set password"})
+        if users.is_default_admin(self.user):
+            auth.reload()  # re-read .passhash into the process (#118)
+        keep = d.get("keep_sessions") is True
+        n = auth.session_revoke_user(self.user, except_prefix=(getattr(self, "sid", "") or None) if keep else None)
+        audit.event(
+            audit.AUTH,
+            "password_change",
+            user=self.user,
+            handler=self,
+            detail={"revoked_sessions": n, "key_rotated": users.is_default_admin(self.user)},
+        )
+        return self._json(200, {"ok": True, "revoked_sessions": n})
+
+    def _admin_user(self, d):
+        """Account management (#111/#112): create, role, status (disable
+        revokes sessions), reset password, delete. Admin-only (route table)."""
+        action = str(d.get("action", ""))
+        username = str(d.get("username", "")).strip()
+        if action == "create":
+            ok, err = users.create(username, str(d.get("password", "")), role=d.get("role") or users.DEFAULT_ROLE)
+            audit.event(audit.ADMIN, "user_create", handler=self, target=username, result="ok" if ok else "failed")
+            return self._json(200 if ok else 400, {"ok": ok, "error": err})
+        if action == "role":
+            ok, err = users.set_role(username, d.get("role", ""))
+            if ok:  # #114: rotate tokens on privilege change
+                auth.session_revoke_user(username)
+            audit.event(audit.ADMIN, "user_role", handler=self, target=username, detail={"role": d.get("role", "")})
+            return self._json(200 if ok else 400, {"ok": ok, "error": err})
+        if action == "status":
+            ok, err = users.set_status(username, d.get("status", ""))
+            if ok and d.get("status") != "active":  # #111: disabling revokes sessions
+                auth.session_revoke_user(username)
+            audit.event(
+                audit.ADMIN, "user_status", handler=self, target=username, detail={"status": d.get("status", "")}
+            )
+            return self._json(200 if ok else 400, {"ok": ok, "error": err})
+        if action == "password":
+            ok, err = users.set_password(username, str(d.get("password", "")))
+            if ok:  # the user's old sessions die with the old credential
+                auth.session_revoke_user(username)
+            audit.event(audit.ADMIN, "user_password_reset", handler=self, target=username)
+            return self._json(200 if ok else 400, {"ok": ok, "error": err})
+        if action == "delete":
+            ok, err = users.delete(username)
+            if ok:
+                auth.session_revoke_user(username)
+            audit.event(audit.ADMIN, "user_delete", handler=self, target=username, result="ok" if ok else "failed")
+            return self._json(200 if ok else 400, {"ok": ok, "error": err})
+        return self._json(400, {"ok": False, "error": "action must be create|role|status|password|delete"})
+
+    def _webauthn_guard(self, fn):
+        """Run a passkey ceremony; feature-flagged (#110)."""
+        if not webauthn.enabled():
+            return self._json(
+                403,
+                {
+                    "ok": False,
+                    "error": "passkeys are disabled; set RD_WEBAUTHN=1 and install the optional "
+                    "'webauthn' package to enable them",
+                },
+            )
+        try:
+            return self._json(200, {"ok": True, **fn()})
+        except webauthn.WebAuthnError as e:
+            audit.event(audit.SECURITY, "webauthn", handler=self, target=self.path, result="failed")
+            return self._json(400, {"ok": False, "error": str(e)})
+        except Exception as e:
+            log.log(f"webauthn error: {e}")
+            return self._json(503, {"ok": False, "error": "passkey backend unavailable"})
+
+
+# ------------------------------------------------------------- QR rendering (#109)
+
+
+def _qr_available():
+    try:
+        from ._vendor import qrcodegen  # noqa: F401  (vendored MIT, docs/VENDORED.md)
+
+        return True
+    except Exception:
+        return False
+
+
+def _qr_svg(text, border=4, white="#fff", black="#111"):
+    """SVG rendering of a QR code (vendored Nayuki encoder, #109)."""
+    from ._vendor import qrcodegen
+
+    qr = qrcodegen.QrCode.encode_text(text, qrcodegen.QrCode.Ecc.MEDIUM)
+    n = qr.get_size()
+    dim = (n + border * 2) * 8
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {dim} {dim}" width="{dim}" height="{dim}"'
+        f' role="img" aria-label="2FA QR code">',
+        f'<rect width="{dim}" height="{dim}" fill="{white}"/>',
+    ]
+    for y in range(n):
+        for x in range(n):
+            if qr.get_module(x, y):
+                parts.append(
+                    f'<rect x="{(x + border) * 8}" y="{(y + border) * 8}" width="8" height="8" fill="{black}"/>'
+                )
+    parts.append("</svg>")
+    return "".join(parts).encode()
+
+
+def _totp_pending_secret(user):
+    """The staged-but-not-yet-confirmed TOTP secret, or None."""
+    rec = users.record(user) or {}
+    return (rec.get("totp") or {}).get("pending") or None
 
 
 # ------------------------------------------------------------------ main
@@ -1128,11 +1689,17 @@ def main(argv=None):
         log.error(str(e))
         print(str(e), file=sys.stderr)
         return 2
+    for w in config.exposure_warnings():  # #122: warn when VNC/bind leaves localhost
+        log.log(f"security warning: {w}")
+        print(f"warning: {w}", file=sys.stderr)
     for err in config.ensure_dirs(config.VALUES):
         log.error(err)
         print(err, file=sys.stderr)
         return 2
 
+    users.migrate_single_user()  # #111: single .passhash -> default admin
+    auth.rate_load()  # #115: a restart must not clear a lockout
+    auth.reload()  # #118: pick up .passhash changes while stopped
     state.snapshot("startup")  # 30: versioned backup of runtime state
     for err in files.setup_roots():  # #84: invalid/missing roots reported at startup
         log.error(err)
@@ -1154,6 +1721,13 @@ def main(argv=None):
 
     signal.signal(signal.SIGTERM, _handle)
     signal.signal(signal.SIGINT, _handle)
+    if hasattr(signal, "SIGHUP"):  # #118: reload credentials without a restart
+
+        def _hup(sig, frame):
+            changed = auth.reload()
+            log.log(f"SIGHUP: credential reload {'applied' if changed else '(no changes)'}")
+
+        signal.signal(signal.SIGHUP, _hup)
     log.log(f"control server starting on {config.BIND_HOST}:{config.PORT} (v{config.VERSION})")
     print(f"Remote control server: http://{config.BIND_HOST}:{config.PORT}  (log: {config.LOG_FILE})")
 
