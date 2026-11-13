@@ -13,7 +13,6 @@ import shutil
 import signal
 import socket
 import stat
-import subprocess
 import sys
 import threading
 import time
@@ -93,9 +92,15 @@ def _reject_503(request):
 
 class Handler(http.BaseHandler):
     # ---- streaming audio (needs custom response, not _json)
-    def _stream_audio(self, mime, codec_args):
+    def _stream_audio(self, codec, bitrate=audio.BITRATE_DEFAULT, shared=None):
+        """Chunked audio stream (#14). The encoder process is shared per
+        (source, codec, bitrate) tier and fans chunks out to every listener
+        (#105); `shared=0` requests an isolated per-client capture."""
         if not limits.gate(self, "audio", "audio streams"):
             return
+        cap, mime = audio.acquire_capture(audio.audio_source(), codec, bitrate, shared=shared)
+        if cap is None:
+            return self._json(503, {"error": "audio capture unavailable"})
         try:
             self.send_response(200)
             self.send_header("Content-Type", mime)
@@ -104,36 +109,12 @@ class Handler(http.BaseHandler):
             self.send_header("Connection", "close")
             self.end_headers()
             self.close_connection = True
-            cmd = [
-                "ffmpeg",
-                "-loglevel",
-                "warning",
-                "-fflags",
-                "nobuffer",
-                "-flags",
-                "low_delay",
-                "-f",
-                "pulse",
-                "-i",
-                audio.audio_source(),
-                *codec_args,
-            ]
-            try:
-                proc = procs.spawn_stream(
-                    cmd,
-                    env=config._pa_env(),
-                    stdout=subprocess.PIPE,
-                    stderr=open(audio.AUDIO_LOG, "ab"),
-                    preexec_fn=procs.die_with_parent,
-                )
-            except Exception as e:
-                log.log(f"ffmpeg start failed: {e}")
-                return
+            lsn = cap.attach()
             started = time.time()
             log.log(f"audio open  {self.path.split('?')[0]} {auth._client_ip(self)}")
             try:
                 while True:
-                    chunk = proc.stdout.read1(4096)
+                    chunk = lsn.next()
                     if not chunk:
                         break
                     self.wfile.write(chunk)
@@ -141,13 +122,7 @@ class Handler(http.BaseHandler):
             except (BrokenPipeError, ConnectionResetError):
                 pass  # client went away; normal on mobile when the tab is backgrounded
             finally:
-                with procs._child_procs_lock:
-                    procs.child_procs.discard(proc)
-                try:
-                    proc.kill()
-                    proc.wait(timeout=3)
-                except Exception:
-                    pass
+                cap.detach(lsn)
                 log.log(f"audio close {self.path.split('?')[0]} after {time.time() - started:.0f}s")
         finally:
             limits.release("audio")
@@ -278,6 +253,32 @@ class Handler(http.BaseHandler):
             return self._json(200, store.install_status(pkg))
         if path == "/api/audio/status":
             return self._json(200, audio.audio_status())
+        if path == "/api/audio/sinks":  # #94: pick the capture sink
+            sel = audio._selected_sink_name()
+            sink_list = audio.sinks()
+            cur = next((s for s in sink_list if s["name"] == (sel or audio._pa("get-default-sink"))), None)
+            return self._json(
+                200,
+                {
+                    "ok": True,
+                    "sinks": sink_list,
+                    "selected": sel,
+                    "volume": cur["volume"] if cur else None,
+                    "mute": cur["mute"] if cur else None,
+                    "notice": audio.notice(),
+                },
+            )
+        if path == "/api/audio/apps":  # #95: per-application volume
+            return self._json(200, {"ok": True, "supported": audio.app_supported(), "apps": audio.audio_apps()})
+        if path == "/api/audio/diagnostics":  # #106
+            return self._json(200, audio.diagnostics())
+        if path == "/api/audio/record":  # #102: recording status
+            return self._json(200, {"ok": True, **audio.record_status()})
+        if path == "/api/audio/recordings":  # #102: stored recordings
+            return self._json(200, {"ok": True, "recordings": audio.recordings_list()})
+        if path == "/api/media/status":  # #101: MPRIS players
+            players = audio.media_players()
+            return self._json(200, {"ok": True, "players": players, "active": players[0] if players else ""})
         if path == "/api/clipboard":
             return self._json(200, clipboard.clipboard_get())
         if path == "/api/clipboard/history":  # #70: q= full-text search, tag= filter
@@ -336,14 +337,15 @@ class Handler(http.BaseHandler):
         if path == "/api/camera/status":
             return self._json(200, media_in.camera_status())
         if path == "/api/audio.raw":
-            return self._stream_audio(
-                "application/octet-stream", ["-ac", "2", "-ar", "44100", "-c:a", "pcm_s16le", "-f", "s16le", "-"]
-            )
-        if path == "/api/audio.opus":
-            return self._stream_audio(
-                'audio/webm; codecs="opus"',
-                ["-c:a", "libopus", "-b:a", "96k", "-vbr", "on", "-frame_duration", "20", "-f", "webm", "-"],
-            )
+            return self._stream_audio("pcm")
+        if path == "/api/audio.opus":  # #96: bitrate per query (clamped server-side)
+            q = parse_qs(url.query)
+            try:
+                bitrate = int(q.get("bitrate", [""])[0])
+            except ValueError:
+                bitrate = audio.BITRATE_DEFAULT
+            shared = q.get("shared", ["1"])[0] != "0"  # #105: per-client isolation opt-out
+            return self._stream_audio("opus", bitrate, shared)
         if path == "/api/stats":
             return self._json(200, stats.system_stats())
         # ---- files & transfer (#78/#79/#81/#83/#84/#88/#89/#90/#92)
@@ -418,8 +420,6 @@ class Handler(http.BaseHandler):
             if not p or not os.path.isfile(p):
                 return self._json(404, {"error": "not found"})
             return self._file_download(files.default_root(), name, inline=False, legacy=True)
-        if path == "/api/pins":
-            return self._json(200, {"pins": state.load_pins()})
         if path == "/api/backup":
             return self._json(200, {"ok": True, "backups": state.list_backups()})
         return self._json(404, {"error": "not found"})
@@ -468,6 +468,43 @@ class Handler(http.BaseHandler):
                 if r is None:
                     return self._json(400, {"ok": False, "error": "unknown setting or non-boolean value"})
                 return self._json(200, {"ok": True, "settings": r})
+            if path == "/api/audio/sink":  # #94: switch the capture sink
+                ok, err = audio.select_sink(str(self._body().get("name", "")))
+                return self._json(200 if ok else 400, {"ok": ok, "error": err})
+            if path == "/api/audio/volume":  # #94: sink volume + mute (client debounces)
+                d = self._body()
+                vol, mute = d.get("volume"), d.get("mute")
+                if vol is None and mute is None:
+                    return self._json(400, {"ok": False, "error": "nothing to change"})
+                if vol is not None and (not isinstance(vol, (int, float)) or isinstance(vol, bool)):
+                    return self._json(400, {"ok": False, "error": "volume must be a number"})
+                if mute is not None and not isinstance(mute, bool):
+                    return self._json(400, {"ok": False, "error": "mute must be a boolean"})
+                ok, err = audio.set_sink_volume(d.get("sink", ""), vol, mute)
+                return self._json(200 if ok else 400, {"ok": ok, "error": err})
+            if path == "/api/audio/app-volume":  # #95: per-application volume + mute
+                d = self._body()
+                vol, mute = d.get("volume"), d.get("mute")
+                if vol is None and mute is None:
+                    return self._json(400, {"ok": False, "error": "nothing to change"})
+                if vol is not None and (not isinstance(vol, (int, float)) or isinstance(vol, bool)):
+                    return self._json(400, {"ok": False, "error": "volume must be a number"})
+                if mute is not None and not isinstance(mute, bool):
+                    return self._json(400, {"ok": False, "error": "mute must be a boolean"})
+                ok, err = audio.set_app_volume(d.get("app", ""), vol, mute)
+                return self._json(200 if ok else 404, {"ok": ok, "error": err})
+            if path == "/api/media/keys":  # #101: MPRIS when possible, keysyms otherwise
+                r = audio.media_key(self._body().get("key", ""))
+                return self._json(200 if r.get("ok") else 400, {"ok": r.get("ok", False), **r})
+            if path == "/api/audio/record":  # #102: start/stop desktop-audio recording
+                d = self._body()
+                if d.get("action") == "start":
+                    ok, err = audio.record_start(fmt=str(d.get("format", "opus")), name=d.get("name"))
+                    return self._json(200 if ok else 400, {"ok": ok, "error": err, **audio.record_status()})
+                if d.get("action") == "stop":
+                    r = audio.record_stop()
+                    return self._json(200, {**r, **audio.record_status()})
+                return self._json(400, {"ok": False, "error": "action must be start or stop"})
             if path.startswith("/api/resize"):
                 q = parse_qs(url.query)
                 result = windows.resize_display(q["w"][0], q["h"][0])
@@ -1041,6 +1078,7 @@ def _shutdown(httpd, signum, _frame):
         os._exit(1)
     _shutdown_started = True
     log.log(f"signal {signum}: shutting down, reaping children")
+    audio.record_stop()  # #102: finalize the recording so the file stays playable
     vncproxy.shutdown_all()  # wake/exit websocket proxy threads
     procs.reap_children(timeout=3)
     clipboard.flush()  # persist clipboard (pins are saved on change)
@@ -1099,6 +1137,8 @@ def main(argv=None):
     for err in files.setup_roots():  # #84: invalid/missing roots reported at startup
         log.error(err)
         print(err, file=sys.stderr)
+    audio.record_recover()  # #102: surface recording fragments from a crash
+    audio.restore_state()  # #94: re-apply sink selection, volume and mute
     clipboard._clip_load()
     files.cleanup_partial_uploads()
     files.gc_transfers()  # #88: expire finished/abandoned transfer jobs

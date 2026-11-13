@@ -126,12 +126,37 @@ and backup guidance.
 
 ## Audio
 
+The capture pipeline picks a PulseAudio sink (user selection or default,
+falling back safely when a selected sink disappears, #94), encodes once
+per quality tier and fans chunks out to every listener (#105).
+
 | Method | Path | Description |
 |---|---|---|
-| GET | `/api/audio/status` | PulseAudio/sink status |
-| GET | `/api/audio.opus` | Live Opus/WebM stream (`audio/webm; codecs="opus"`) |
-| GET | `/api/audio/raw` | Live PCM s16le 44.1 kHz stereo stream |
-| GET | `/api/audio/test` | Plays a 4 s 440 Hz test tone into the sink |
+| GET | `/api/audio/status` | PulseAudio/sink status + ffmpeg log tail |
+| GET | `/api/audio/sinks` | Sinks with name, description, state, volume, mute; the selected sink and any fallback notice (#94) |
+| POST | `/api/audio/sink` | `{"name"}` — point the capture pipeline at this sink (#94) |
+| POST | `/api/audio/volume` | `{"sink"?, "volume"?, "mute"?}` — percent 0-150 (clamped) and mute; persisted and re-applied at startup so they survive reconnects (#94) |
+| GET | `/api/audio/apps` | Playing applications grouped by name with per-stream levels and stored defaults (#95) |
+| POST | `/api/audio/app-volume` | `{"app", "volume"?, "mute"?}` — every live stream of one app; the level becomes that app's default for new streams (#95) |
+| GET | `/api/audio.opus` | Live Opus/WebM stream; `?bitrate=` (16000-320000, clamped) picks the tier, `?shared=0` forces an isolated per-client capture (#96/#105) |
+| GET | `/api/audio.raw` | Live PCM s16le 44.1 kHz stereo stream |
+| GET | `/api/audio/test` | Plays a 4 s 440 Hz test tone into the sink (works without a running audio session) |
+| GET | `/api/audio/diagnostics` | Sink, source, codec, bitrate, captures, listeners, recording state, last error, notice, log tail (#106) |
+| GET | `/api/audio/record` | Recording status: active, name, seconds, bytes, caps (#102) |
+| POST | `/api/audio/record` | `{"action": "start"\|"stop", "format"?: "opus"\|"flac", name?}` — desktop-audio recording into the files root (#102) |
+| GET | `/api/audio/recordings` | Stored recordings with download paths (#102) |
+| GET | `/api/media/status` | MPRIS players (via `playerctl`), when available (#101) |
+| POST | `/api/media/keys` | `{"key"}` — one of play/pause/playpause/next/prev/stop/mute/volup/voldown; MPRIS when possible, XF86 keysyms otherwise (#101) |
+
+Quality presets (#96): `low` = 48 kbps (complexity 3), `medium` = 96 kbps
+(complexity 6), `high` = 160 kbps (complexity 9); a custom `bitrate` is
+clamped server-side. The client switches tiers without a page reload and
+falls back automatically on constrained links.
+
+Recording (#102) writes WebM/Opus (or FLAC) in small self-contained
+clusters under `Recordings/` in the first shared files root: a crash
+loses at most the last cluster. A watchdog enforces `RD_REC_MAX_MINUTES`
+and `RD_REC_MAX_MB`; SIGTERM finalizes the file cleanly.
 
 ## Devices in (desktop browser clients)
 

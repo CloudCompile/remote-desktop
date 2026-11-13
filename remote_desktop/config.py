@@ -114,6 +114,23 @@ SCHEMA = [
     _Setting("max_audio", "RD_MAX_AUDIO", "int", 8, "Maximum concurrent audio streams (ffmpeg children)."),
     _Setting("max_media_in", "RD_MAX_MEDIA_IN", "int", 2, "Maximum concurrent device-in streams (mic + webcam)."),
     _Setting(
+        "audio_shared",
+        "RD_AUDIO_SHARED",
+        "bool",
+        True,
+        "Share one ffmpeg capture across audio listeners with the same quality (#105). Set 0 for per-client capture (isolation).",
+    ),
+    _Setting(
+        "rec_max_minutes",
+        "RD_REC_MAX_MINUTES",
+        "int",
+        120,
+        "Maximum desktop-audio recording duration in minutes (#102).",
+    ),
+    _Setting(
+        "rec_max_mb", "RD_REC_MAX_MB", "int", 200, "Maximum desktop-audio recording size in MiB (#102)."
+    ),
+    _Setting(
         "http_timeout", "RD_HTTP_TIMEOUT", "duration", 120, "Seconds an idle keep-alive HTTP connection is kept open."
     ),
     _Setting(
@@ -200,6 +217,13 @@ def _parse_one(spec, raw):
         return os.path.expanduser(raw)
     if kind == "csv":
         return {p.strip() for p in raw.split(",") if p.strip()}
+    if kind == "bool":
+        v = raw.strip().lower()
+        if v in ("1", "true", "yes", "on"):
+            return True
+        if v in ("0", "false", "no", "off"):
+            return False
+        raise ValueError(f"expected a boolean, got {raw!r}")
     if kind in ("int", "port", "dpi"):
         return int(raw)
     if kind == "float":
@@ -295,6 +319,8 @@ def validate(values=None):
     need(v["log_format"] in _LOG_FORMATS, f"RD_LOG_FORMAT: one of {'|'.join(_LOG_FORMATS)}, got {v['log_format']!r}")
     for name in ("max_connections", "max_ws", "max_audio", "max_media_in"):
         need(1 <= v[name] <= 10_000, f"{_env_of(name)}: must be 1-10000, got {v[name]}")
+    need(1 <= v["rec_max_minutes"] <= 1440, f"RD_REC_MAX_MINUTES: must be 1-1440, got {v['rec_max_minutes']}")
+    need(1 <= v["rec_max_mb"] <= 4096, f"RD_REC_MAX_MB: must be 1-4096, got {v['rec_max_mb']}")
     for name in ("http_timeout", "ws_idle_timeout", "ready_cache"):
         need(1 <= v[name] <= 86_400, f"{_env_of(name)}: seconds must be 1-86400, got {v[name]}")
     need(1 <= v["ws_send_timeout"] <= 120, f"RD_WS_SEND_TIMEOUT: seconds must be 1-120, got {v['ws_send_timeout']}")
@@ -376,6 +402,9 @@ MAX_CONNECTIONS = VALUES["max_connections"]
 MAX_WS = VALUES["max_ws"]
 MAX_AUDIO = VALUES["max_audio"]
 MAX_MEDIA_IN = VALUES["max_media_in"]
+AUDIO_SHARED = VALUES["audio_shared"]
+REC_MAX_MINUTES = VALUES["rec_max_minutes"]
+REC_MAX_MB = VALUES["rec_max_mb"]
 HTTP_TIMEOUT = VALUES["http_timeout"]
 WS_IDLE_TIMEOUT = VALUES["ws_idle_timeout"]
 WS_SEND_TIMEOUT = VALUES["ws_send_timeout"]
