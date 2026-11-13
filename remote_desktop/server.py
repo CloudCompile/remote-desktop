@@ -690,6 +690,18 @@ class Handler(http.BaseHandler):
 
         if path == "/api/login":
             return self._login()
+        # passkey login ceremony (#110): public, BEFORE the cookie check —
+        # the assertion itself is the credential. Origin-checked (#116).
+        if path == "/api/webauthn/auth/options":
+            if not auth.origin_ok(self):
+                return self._json(403, {"ok": False, "error": "cross-origin request refused"})
+            return self._webauthn_guard(lambda: webauthn.authentication_options(handler=self))
+        if path == "/api/webauthn/auth/verify":
+            if not auth.origin_ok(self):
+                return self._json(403, {"ok": False, "error": "cross-origin request refused"})
+            if not webauthn.enabled():
+                return self._json(403, {"ok": False, "error": "passkeys are disabled (RD_WEBAUTHN)"})
+            return self._passkey_login()
         if path == "/api/logout":
             return self._json(
                 200,
@@ -1418,6 +1430,37 @@ class Handler(http.BaseHandler):
         timeout = 15 + int(len(text) * 0.02)  # 12 ms per char + margin
         rc, _, err = procs._run(["xdotool", "type", "--clearmodifiers", "--delay", "12", text], timeout=timeout)
         return self._json(200 if rc == 0 else 500, {"ok": rc == 0, "error": None if rc == 0 else err[:200]})
+
+    def _passkey_login(self):
+        """Finish a passkey login (#110): verify the assertion, mint a
+        session exactly like a password login (2FA-free — the passkey IS
+        a second factor)."""
+        try:
+            body = self._body()
+        except Exception:
+            return self._json(400, {"ok": False, "error": "bad request"})
+        try:
+            user = webauthn.authentication_verify(self, body)
+        except webauthn.WebAuthnError as e:
+            audit.event(audit.AUTH, "login_passkey", handler=self, result="failed")
+            return self._json(401, {"ok": False, "error": str(e)})
+        except Exception as e:
+            log.log(f"passkey login error: {e}")
+            return self._json(400, {"ok": False, "error": "malformed assertion"})
+        if not users.is_active(user):
+            audit.event(audit.AUTH, "login_passkey", user=user, handler=self, result="disabled")
+            return self._json(401, {"ok": False, "error": "account disabled"})
+        users.ensure_layout(user)
+        sid, token = auth.session_create(user, self)
+        users.touch_last_login(user)
+        csrf = auth.csrf_token(sid)
+        audit.event(audit.AUTH, "login_passkey", user=user, handler=self, result="ok")
+        notify.on_login(user, self)
+        return self._json(
+            200,
+            {"ok": True, "user": user, "role": users.role(user) or "operator", "csrf": csrf},
+            extra={"Set-Cookie": [auth.cookie_header(self, token), auth.csrf_cookie_header(csrf)]},
+        )
 
     def _login(self):
         """Multi-user login (#111): rate limit -> password -> TOTP/recovery

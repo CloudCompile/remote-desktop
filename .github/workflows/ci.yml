@@ -28,15 +28,19 @@ jobs:
       - name: JS syntax
         run: |
           set -e
-          for f in web/touch.js web/app/*.js; do node --check "$f"; done
-          # extract the inline module script from index.html and check it
+          for f in web/touch.js web/app/*.js web/login.js; do node --check "$f"; done
+          # CSP forbids inline scripts (#117): none may come back
           python3 - <<'PY'
           import re, pathlib
-          html = pathlib.Path("web/index.html").read_text()
-          m = re.search(r'<script type="module">(.*?)</script>', html, re.S)
-          pathlib.Path("/tmp/inline-module.mjs").write_text(m.group(1))
+          bad = []
+          for p in ("web/index.html", "web/login.html"):
+              html = pathlib.Path(p).read_text()
+              for m in re.finditer(r"<script(?![^>]*\bsrc=)[^>]*>", html):
+                  bad.append((p, m.group(0)))
+          if bad:
+              print("inline <script> found (CSP #117 forbids it):", bad)
+              raise SystemExit(1)
           PY
-          node --check /tmp/inline-module.mjs
 
       - name: Docs links
         run: python3 scripts/check-links.py

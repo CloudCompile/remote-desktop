@@ -17,40 +17,41 @@
         background:#262626;color:#fff;font-size:16px;box-sizing:border-box;-webkit-appearance:none}
   input:focus{outline:2px solid #2a6;border-color:transparent}
   button{width:100%;padding:14px;border:0;border-radius:10px;background:#2a6;color:#fff;
-         font-size:16px;font-weight:600;-webkit-appearance:none}
+         font-size:16px;font-weight:600;-webkit-appearance:none;margin-top:6px}
   button:active{background:#285}
+  button.ghost{background:#262626;color:#bbb;font-weight:400}
   #msg{color:#f88;margin-top:12px;font-size:14px;min-height:18px}
+  .row{display:flex;gap:8px}
+  .row button{flex:1}
+  label{font-size:13px;color:#999}
+  #step2fa{display:none}
+  .lang{position:fixed;top:12px;right:12px}
+  .lang select{background:#262626;color:#eee;border:1px solid #2c2c2c;border-radius:8px;padding:6px}
 </style>
 </head>
 <body>
-<form id="f">
+<form id="f" novalidate>
   <h2>Remote Desktop</h2>
-  <input id="u" placeholder="Username" autocomplete="username" autocapitalize="none" required>
-  <input id="p" type="password" placeholder="Password" autocomplete="current-password" required>
-  <button type="submit">Log in</button>
-  <div id="msg"></div>
+  <div class="lang"><select id="lang" aria-label="Language">
+    <option value="en">EN</option><option value="de">DE</option><option value="es">ES</option><option value="fr">FR</option>
+  </select></div>
+  <div id="step1">
+    <label for="u" data-i18n="login.user">Username</label>
+    <input id="u" placeholder="Username" autocomplete="username" autocapitalize="none" required>
+    <label for="p" data-i18n="login.pass">Password</label>
+    <input id="p" type="password" placeholder="Password" autocomplete="current-password" required>
+    <button type="submit" id="go" data-i18n="login.submit">Log in</button>
+    <button type="button" id="passkey" class="ghost" hidden data-i18n="login.passkey">Sign in with a passkey</button>
+  </div>
+  <div id="step2fa">
+    <label for="code" data-i18n="login.totpLabel">Two-factor code</label>
+    <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="12"
+           placeholder="6-digit code or recovery code" aria-describedby="msg">
+    <button type="submit" id="go2" data-i18n="login.verify">Verify</button>
+    <button type="button" id="back" class="ghost" data-i18n="login.back">Use another account</button>
+  </div>
+  <div id="msg" role="alert" aria-live="polite"></div>
 </form>
-<script>
-document.getElementById('f').addEventListener('submit', async e => {
-  e.preventDefault();
-  const msg = document.getElementById('msg');
-  msg.textContent = '';
-  try {
-    const r = await fetch('/api/login', {
-      method: 'POST', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        username: document.getElementById('u').value,
-        password: document.getElementById('p').value,
-      }),
-    });
-    const j = await r.json();
-    if (j.ok) location.href = '/';
-    else msg.textContent = j.error || 'Login failed';
-  } catch (_) {
-    msg.textContent = 'Could not reach the server.';
-  }
-});
-</script>
+<script src="/login.js"></script>
 </body>
 </html>
