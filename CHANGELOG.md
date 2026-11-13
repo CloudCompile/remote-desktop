@@ -7,8 +7,45 @@ Format: [Keep a Changelog](https://keepachangelog.com/), semver.
 
 ### Planned
 
-- v2.4.0 through v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones,
+- v2.5.0 through v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones,
   release themes and linked issues.
+
+## [2.4.0] — 2026-11-13
+
+### Added
+
+- Multi-root file manager: `RD_FILES_ROOTS` with labels and read-only /
+  quota flags, listings with type/size/mode/owner, breadcrumbs, mkdir,
+  rename, move, copy and bulk delete with per-item results (#84, #79).
+- Chunked resumable uploads: per-chunk SHA-256, fsync'd acknowledgements,
+  retry at the failed offset, atomic landing, TTL garbage collection and
+  a bounded session count (#78).
+- Web upload queue: drag-drop and multi-pick, concurrency cap,
+  server-acked progress, pause/retry/cancel, duplicate handling and
+  navigation-surviving queue state (#80, #88).
+- Sorting, bounded recursive search and bulk selection (#81).
+- Previews for images/PDF/video on a private temp copy via argv-only
+  host tools, with download fallback and inline-execution never (#82).
+- Range downloads: 206/416 with Content-Range, ETag and bounded
+  streaming (#83).
+- Archive create (zip/tar.gz/tar.xz) and safe extraction with zip-slip
+  and zip-bomb protection (#85).
+- Unicode-safe names: NFC/casefold collision detection, RFC 5987
+  download filenames (#86).
+- Share target + camera capture input from the installed PWA (#87).
+- Disk space reporting, `RD_FILES_RESERVE` and per-root quotas (#89).
+- chmod/executable toggle via fchmod on O_NOFOLLOW fds; setuid/setgid
+  refused; JSONL audit log with rotation and an authenticated read view
+  (#90, #92).
+- docs/FILES.md (containment model, layout, troubleshooting) and a full
+  API reference (#93).
+
+### Security
+
+- **Path containment rewritten (P0, #91)**: every path component is
+  opened `O_NOFOLLOW` relative to a per-op directory fd with kernel
+  verification — no verify-then-use window; traversal, null-byte and
+  control-char payloads rejected before touching the filesystem.
 
 ## [2.3.0] — 2026-11-13
 
