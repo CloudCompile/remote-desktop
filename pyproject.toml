@@ -1,0 +1,10 @@
+# Runtime is stdlib-only python3. Ruff is a CI/dev tool (issue #13).
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+exclude = ["web/vendor", "web/core"]
+
+[tool.ruff.lint]
+# Error classes + pyflakes only; the single-file server uses module-level
+# globals intentionally, so unused-import/variable noise stays off.
+select = ["E9", "F63", "F7", "F82"]

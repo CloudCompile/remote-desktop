@@ -20,6 +20,35 @@ jobs:
       - name: Shell syntax
         run: sh -n session.sh start.sh webapps.sh tunnel-url.sh
 
+      - name: Lint (ruff)
+        run: |
+          pip install ruff
+          ruff check control.py tests/ scripts/
+
+      - name: Unit tests (pytest)
+        run: |
+          pip install pytest
+          python3 -m pytest
+
+      - name: JS syntax
+        run: |
+          set -e
+          for f in web/touch.js web/app/*.js; do node --check "$f"; done
+          # extract the inline module script from index.html and check it
+          python3 - <<'PY'
+          import re, pathlib
+          html = pathlib.Path("web/index.html").read_text()
+          m = re.search(r'<script type="module">(.*?)</script>', html, re.S)
+          pathlib.Path("/tmp/inline-module.mjs").write_text(m.group(1))
+          PY
+          node --check /tmp/inline-module.mjs
+
+      - name: Docs links
+        run: python3 scripts/check-links.py
+
+      - name: Vendored integrity (#20)
+        run: sha256sum -c docs/VENDORED.sums
+
       - name: No secrets committed
         run: |
           set -e

@@ -107,6 +107,42 @@ sudo systemctl restart remote-control
 The frontend is served from disk, so a browser reload is enough for UI
 changes; Python changes need the restart.
 
+### Supported versions
+
+| Release | Status |
+|---|---|
+| latest tagged release | supported (fixes land as patch releases) |
+| previous tagged release | best-effort security fixes only |
+| older | unsupported — upgrade |
+
+Tested on Ubuntu 24.04 with Python 3.10–3.12 and TigerVNC. Other Debian
+derivatives generally work; see KNOWN-LIMITATIONS.md.
+
+### Upgrading
+
+1. Skim the [release notes](https://github.com/CloudCompile/remote-desktop/releases)
+   for breaking changes (they are called out under "Changed" / "Removed").
+2. `git pull` on the host, then `sudo systemctl restart remote-control`.
+3. Reload the browser. State (pins, clipboard history) is read back from
+   `.pins.json` / `.cliphistory.json`; the schemas are forward-compatible
+   within a major version.
+4. If the release added systemd units, re-run the unit copy step from
+   section 3 and `sudo systemctl daemon-reload`.
+
+### Rollback
+
+Roll back by checking out the previous tag — state files are forward
+compatible, so no data migration needs undoing:
+
+```sh
+cd /opt/remote-desktop
+git checkout v2.0.0
+sudo systemctl restart remote-control
+```
+
+If a rollback was needed because of a bug, please open an issue with the
+root cause; per docs/RELEASING.md, tags are never rewritten.
+
 ## Hardening checklist
 
 - [ ] Strong password in `.passhash` (mode 600)
