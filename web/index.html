@@ -12,90 +12,143 @@
 <link rel="apple-touch-icon" href="/app/images/icons/novnc-152x152.png">
 <link rel="icon" href="/app/images/icons/novnc-32x32.png" type="image/png">
 <title>Remote Desktop</title>
+<script>
+/* apply the stored theme before first paint (#51) — no flash of the wrong theme */
+(function(){
+  try {
+    var p = localStorage.getItem('rd_theme') || 'dark';
+    if (p === 'auto') p = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', p);
+  } catch (_) {}
+})();
+</script>
 <style>
-  :root{--it:0px;--ib:0px;--il:0px;--ir:0px;--accent:#2a6;--sheet:#161616}
-  html,body{margin:0;padding:0;height:100%;background:#000;color:#eee;font-family:system-ui,-apple-system,sans-serif;
+  /* theme variables (#51): dark is the default; light and high-contrast
+     are selected via html[data-theme]; "auto" resolves in JS (pre-paint
+     script below) so the wrong theme can never flash on load. */
+  :root{
+    --it:0px;--ib:0px;--ikb:0px;--il:0px;--ir:0px;
+    --accent:#2a6;--accent-fg:#fff;
+    --bg:#000;--fg:#eee;--muted:#999;--faint:#777;
+    --sheet:#161616;--card:#2a2a2a;--card2:#333;--line:#262626;--grip:#444;
+    --chip:#262626;--chip-fg:#bbb;
+    --scrim:rgba(0,0,0,.45);--pill:rgba(16,16,16,.9);
+    --ok:#9c9;--err:#f88;
+    --handle-bg:rgba(42,102,102,.94);--handle-active:#3a8c8c;
+    --bar-btn:rgba(28,28,28,.92);
+    --bar-grad:rgba(0,0,0,.55);
+    --shadow:rgba(0,0,0,.55);
+    --dot-idle:#777;--dot-good:#3c6;--dot-fair:#fb0;--dot-bad:#f44;
+  }
+  html[data-theme=light]{
+    --accent:#0f766e;--accent-fg:#fff;
+    --bg:#f2f2f4;--fg:#1c1c1e;--muted:#56565c;--faint:#6e6e76;
+    --sheet:#fff;--card:#e8e8ec;--card2:#dcdce2;--line:#d0d0d8;--grip:#c8c8d0;
+    --chip:#e4e4ea;--chip-fg:#3a3a40;
+    --scrim:rgba(0,0,0,.35);--pill:rgba(255,255,255,.95);
+    --ok:#0c7a43;--err:#c62828;
+    --handle-bg:rgba(15,118,110,.95);--handle-active:#0d5f57;
+    --bar-btn:rgba(250,250,252,.94);
+    --bar-grad:rgba(0,0,0,.25);
+    --shadow:rgba(0,0,0,.18);
+    --dot-idle:#aaa;--dot-good:#0c7a43;--dot-fair:#b45309;--dot-bad:#c62828;
+  }
+  html[data-theme=high]{
+    --accent:#ffe600;--accent-fg:#000;
+    --bg:#000;--fg:#fff;--muted:#fff;--faint:#e0e0e0;
+    --sheet:#000;--card:#0a0a0a;--card2:#1a1a1a;--line:#888;--grip:#888;
+    --chip:#111;--chip-fg:#fff;
+    --scrim:rgba(0,0,0,.7);--pill:rgba(0,0,0,.97);
+    --ok:#5f5;--err:#f55;
+    --handle-bg:#000;--handle-active:#222;
+    --bar-btn:rgba(0,0,0,.97);
+    --bar-grad:rgba(0,0,0,.7);
+    --shadow:rgba(0,0,0,.9);
+    --dot-idle:#888;--dot-good:#5f5;--dot-fair:#ffdd55;--dot-bad:#f55;
+  }
+  html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,sans-serif;
             overflow:hidden;touch-action:none;overscroll-behavior:none;-webkit-user-select:none;user-select:none;
             -webkit-touch-callout:none}
-  #app{position:fixed;top:var(--it);bottom:var(--ib);left:var(--il);right:var(--ir);background:#000;overflow:hidden}
+  #app{position:fixed;top:var(--it);bottom:var(--ib);left:var(--il);right:var(--ir);background:var(--bg);overflow:hidden}
   #screen{position:absolute;inset:0;overflow:hidden}
   #probe{position:fixed;visibility:hidden;pointer-events:none;
          padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px)
                  env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
 
   /* status pill: bottom center, above the toolbar, out of the menus' way */
-  #status{position:absolute;bottom:calc(var(--ib) + 76px);left:50%;transform:translateX(-50%);z-index:12;
-          background:rgba(16,16,16,.9);border-radius:16px;padding:6px 14px;font-size:12px;color:#9c9;
+  #status{position:absolute;bottom:calc(var(--ib) + var(--ikb,0px) + 76px);left:50%;transform:translateX(-50%);z-index:12;
+          background:var(--pill);border-radius:16px;padding:6px 14px;font-size:12px;color:var(--ok);
           max-width:80%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;
           transition:opacity .4s;opacity:0}
   #status.show{opacity:1}
-  #status.err{color:#f88}
+  #status.err{color:var(--err)}
 
   /* bottom toolbar: thumb-reachable, safe-area aware.
      The bar itself is click-through so only its buttons intercept touches;
      taps between/around buttons reach the remote desktop underneath. */
-  #bar{position:absolute;left:0;right:0;bottom:0;z-index:11;display:flex;justify-content:space-around;
+  #bar{position:absolute;left:0;right:0;bottom:var(--ikb,0px);z-index:11;display:flex;justify-content:space-around;
        padding:6px calc(var(--ir) + 6px) calc(var(--ib) + 6px) calc(var(--il) + 6px);
-       background:linear-gradient(transparent,rgba(0,0,0,.55) 30%);
+       background:linear-gradient(transparent,var(--bar-grad) 30%);
        pointer-events:none;transition:opacity .25s, transform .25s}
   #bar.hidden{opacity:0;transform:translateY(100%);pointer-events:none}
-  #bar button{pointer-events:auto;min-width:52px;min-height:48px;border:0;border-radius:12px;background:rgba(28,28,28,.92);
-              color:#ddd;font-size:11px;display:flex;flex-direction:column;align-items:center;justify-content:center;
-              gap:2px;padding:4px 8px;-webkit-tap-highlight-color:transparent}
-  #bar button:active{background:var(--accent);color:#fff}
+  #bar button{pointer-events:auto;min-width:44px;min-height:48px;border:0;border-radius:12px;background:var(--bar-btn);
+              color:var(--fg);font-size:11px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+              gap:2px;padding:4px 6px;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+  #bar button:active{background:var(--accent);color:var(--accent-fg)}
   #bar button svg{width:22px;height:22px;fill:currentColor}
-  #bar button.on{background:var(--accent);color:#fff}
+  #bar button.on{background:var(--accent);color:var(--accent-fg)}
   /* grab handle shown while the toolbar is hidden; tap to reveal */
   #barHandle{position:absolute;left:50%;bottom:calc(var(--ib) + var(--ikb,0px) + 8px);z-index:11;
              transform:translateX(-50%);display:flex;align-items:center;justify-content:center;gap:6px;
-             height:32px;padding:0 16px;border:1px solid rgba(255,255,255,.3);border-radius:16px;
-             background:rgba(42,102,102,.94);color:#fff;font-size:12px;font-weight:600;
-             letter-spacing:.02em;box-shadow:0 3px 14px rgba(0,0,0,.55);
-             pointer-events:auto;transition:opacity .2s,transform .2s}
+             height:32px;padding:0 16px;border:1px solid var(--grip);border-radius:16px;
+             background:var(--handle-bg);color:var(--accent-fg);font-size:12px;font-weight:600;
+             letter-spacing:.02em;box-shadow:0 3px 14px var(--shadow);
+             pointer-events:auto;transition:opacity .2s,transform .2s;touch-action:manipulation}
   #barHandle::before{content:'▲';font-size:10px;opacity:.95}
-  #barHandle:active{background:#3a8c8c;transform:translateX(-50%) scale(.96)}
+  #barHandle:active{background:var(--handle-active);transform:translateX(-50%) scale(.96)}
   #barHandle.hidden{opacity:0;pointer-events:none;transform:translateX(-50%) translateY(6px)}
   /* connection quality dot (#50): green <300 ms, amber <1 s, red worse */
-  #netDot{width:8px;height:8px;border-radius:50%;background:#777;flex:0 0 auto}
-  #netDot.good{background:#3c6}#netDot.fair{background:#fb0}#netDot.poor,#netDot.down{background:#f44}
+  #netDot{width:8px;height:8px;border-radius:50%;background:var(--dot-idle);flex:0 0 auto}
+  #netDot.good{background:var(--dot-good)}#netDot.fair{background:var(--dot-fair)}
+  #netDot.poor,#netDot.down{background:var(--dot-bad)}
 
   /* menus drop from the TOP of the screen */
-  .backdrop{position:absolute;inset:0;z-index:20;background:rgba(0,0,0,.45);opacity:0;pointer-events:none;
+  .backdrop{position:absolute;inset:0;z-index:20;background:var(--scrim);opacity:0;pointer-events:none;
             transition:opacity .2s}
   .backdrop.show{opacity:1;pointer-events:auto}
   .sheet{position:absolute;left:0;right:0;top:0;z-index:21;max-height:78%;overflow-y:auto;
-         background:var(--sheet);border-radius:0 0 16px 16px;
+         background:var(--sheet);color:var(--fg);border-radius:0 0 16px 16px;
          padding:calc(var(--it) + 12px) 14px 20px calc(var(--il) + 14px);
          margin-right:var(--ir);transform:translateY(-105%);transition:transform .25s ease-out;touch-action:pan-y;
-         box-shadow:0 10px 36px rgba(0,0,0,.55)}
+         box-shadow:0 10px 36px var(--shadow)}
   .sheet.show{transform:translateY(0)}
   .sheet::before{content:'';position:sticky;top:0;display:block;margin:-4px auto 8px;width:44px;height:4px;
-                 border-radius:2px;background:#444}
-  .sheet h3{font-size:13px;color:#888;margin:8px 0 10px;text-transform:uppercase;letter-spacing:.08em}
+                 border-radius:2px;background:var(--grip)}
+  .sheet h3{font-size:13px;color:var(--muted);margin:8px 0 10px;text-transform:uppercase;letter-spacing:.08em}
   .sheet .row{display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;align-items:center}
   .sheet .row[hidden]{display:none}
   .sheet button,.sheet select,.sheet input[type=text]{flex:1 1 auto;min-height:44px;border:0;border-radius:10px;
-         background:#2a2a2a;color:#eee;padding:0 12px;font-size:14px;box-sizing:border-box}
-  .sheet button{background:#333}
-  .sheet button.primary{background:var(--accent);color:#fff}
+         background:var(--card);color:var(--fg);padding:0 12px;font-size:14px;box-sizing:border-box}
+  .sheet button{background:var(--card2)}
+  .sheet button.primary{background:var(--accent);color:var(--accent-fg)}
   .sheet button.step{flex:0 0 48px}
-  .sheet label{flex:1 1 100%;font-size:12px;color:#999;padding-top:4px}
-  .sheet .val{flex:0 0 56px;text-align:center;color:#9c9;font-size:13px}
+  .sheet label{flex:1 1 100%;font-size:12px;color:var(--muted);padding-top:4px}
+  .sheet .val{flex:0 0 56px;text-align:center;color:var(--ok);font-size:13px}
   .sheet input[type=range]{flex:1;width:100%;min-height:36px}
   .sheet input[type=checkbox]{width:20px;height:20px;min-height:0}
   /* segmented control (input mode, viewport modes) */
   .sheet .seg{display:flex;gap:4px;flex:1 1 100%}
-  .sheet .seg button{flex:1;min-height:40px;background:var(--card2,#333);border-radius:10px;
-                     font-size:13px;padding:0 6px;color:var(--fg,#eee)}
-  .sheet .seg button.on{background:var(--accent);color:var(--accent-fg,#fff)}
+  .sheet .seg button{flex:1;min-height:40px;background:var(--card2);border-radius:10px;
+                     font-size:13px;padding:0 6px;color:var(--fg)}
+  .sheet .seg button.on{background:var(--accent);color:var(--accent-fg)}
   .sheet .check{flex:0 1 auto;min-height:44px;display:flex;align-items:center;gap:8px;font-size:14px;
-                background:#222;border-radius:10px;padding:0 12px}
-  .sheet hr{border:0;border-top:1px solid #262626;margin:10px 0}
+                background:var(--card);border-radius:10px;padding:0 12px}
+  .sheet hr{border:0;border-top:1px solid var(--line);margin:10px 0}
   .appgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;margin-bottom:10px}
-  .appgrid button{min-height:64px;display:flex;flex-direction:column;gap:3px;font-size:11.5px;background:#232323;
+  .appgrid button{min-height:64px;display:flex;flex-direction:column;gap:3px;font-size:11.5px;background:var(--card);
                   align-items:center;justify-content:center;text-align:center;
                   -webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
-  .appgrid button small{color:#777;font-size:9.5px;max-width:100%;overflow:hidden;text-overflow:ellipsis;
+  .appgrid button small{color:var(--faint);font-size:9.5px;max-width:100%;overflow:hidden;text-overflow:ellipsis;
                         display:block;white-space:nowrap;padding:0 4px}
   .appicon{width:32px;height:32px;object-fit:contain;flex:0 0 auto;position:absolute;inset:0}
   .tilewrap{width:32px;height:32px;position:relative;flex:0 0 auto}
@@ -105,61 +158,75 @@
   .chips{display:flex;gap:6px;overflow-x:auto;padding:2px 0 8px;touch-action:pan-x;-webkit-overflow-scrolling:touch;
          scrollbar-width:none}
   .chips::-webkit-scrollbar{display:none}
-  .chips button{flex:0 0 auto;min-height:32px;min-width:0;border:0;border-radius:16px;background:#262626;
-                color:#bbb;font-size:12px;padding:0 14px;-webkit-tap-highlight-color:transparent}
-  .chips button.on{background:var(--accent);color:#fff;font-weight:600}
-  .grphead{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.08em;margin:10px 0 6px;
+  .chips button{flex:0 0 auto;min-height:32px;min-width:0;border:0;border-radius:16px;background:var(--chip);
+                color:var(--chip-fg);font-size:12px;padding:0 14px;-webkit-tap-highlight-color:transparent}
+  .chips button.on{background:var(--accent);color:var(--accent-fg);font-weight:600}
+  .grphead{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.08em;margin:10px 0 6px;
            display:flex;align-items:center;gap:8px}
-  .grphead::after{content:'';flex:1;border-top:1px solid #262626}
+  .grphead::after{content:'';flex:1;border-top:1px solid var(--line)}
   .stats{display:flex;flex-direction:column;gap:8px;font-size:12px}
   .stat{display:flex;align-items:center;gap:8px}
-  .stat .lbl{flex:0 0 52px;color:#999}
-  .stat .bar{flex:1;height:8px;background:#262626;border-radius:4px;overflow:hidden}
+  .stat .lbl{flex:0 0 52px;color:var(--muted)}
+  .stat .bar{flex:1;height:8px;background:var(--line);border-radius:4px;overflow:hidden}
   .stat .bar i{display:block;height:100%;background:var(--accent)}
-  .stat .val{flex:0 0 84px;text-align:right;color:#ccc}
-  .frow{display:flex;align-items:center;gap:8px;padding:8px 4px;border-bottom:1px solid #262626}
+  .stat .val{flex:0 0 84px;text-align:right;color:var(--fg)}
+  .frow{display:flex;align-items:center;gap:8px;padding:8px 4px;border-bottom:1px solid var(--line)}
   .frow .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
-  .frow .sz{flex:0 0 auto;color:#777;font-size:11px}
+  .frow .sz{flex:0 0 auto;color:var(--faint);font-size:11px}
   .frow button{flex:0 0 auto;min-height:36px;min-width:0;padding:0 10px;font-size:11px}
   .pinhead .grphead{color:var(--accent)}
-  .strow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #232323}
+  .strow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
   .strow .nm{flex:1;min-width:0}
   .strow .nm b{display:block;font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .strow .nm small{display:block;color:#888;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .strow button{flex:0 0 auto;min-height:40px;min-width:86px;border:0;border-radius:10px;background:#333;
-                color:#eee;font-size:13px;padding:0 12px;-webkit-tap-highlight-color:transparent}
-  .strow button.primary{background:var(--accent);color:#fff}
+  .strow .nm small{display:block;color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .strow button{flex:0 0 auto;min-height:40px;min-width:86px;border:0;border-radius:10px;background:var(--card2);
+                color:var(--fg);font-size:13px;padding:0 12px;-webkit-tap-highlight-color:transparent}
+  .strow button.primary{background:var(--accent);color:var(--accent-fg)}
   .strow button:disabled{opacity:.55}
   #storeList{max-height:46vh;overflow-y:auto;touch-action:pan-y;margin-top:4px}
-  .cliprow{display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid #232323}
+  .cliprow{display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--line)}
   .cliprow .cv{flex:1;min-width:0;cursor:pointer}
   .cliprow .cv b{display:block;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;
                  text-overflow:ellipsis;max-height:2.6em;white-space:pre-wrap}
-  .cliprow .cv small{display:block;color:#777;font-size:10.5px;margin-top:2px}
-  .cliprow button{flex:0 0 auto;min-height:36px;min-width:36px;border:0;border-radius:8px;background:#333;
-                  color:#eee;font-size:12px;padding:0 8px;-webkit-tap-highlight-color:transparent}
-  .cliprow button.del{background:#422;color:#f99}
+  .cliprow .cv small{display:block;color:var(--faint);font-size:10.5px;margin-top:2px}
+  .cliprow button{flex:0 0 auto;min-height:36px;min-width:36px;border:0;border-radius:8px;background:var(--card2);
+                  color:var(--fg);font-size:12px;padding:0 8px;-webkit-tap-highlight-color:transparent}
+  .cliprow button.del{background:#422;color:var(--err)}
   #clipList{max-height:34vh;overflow-y:auto;touch-action:pan-y;margin-top:4px}
-  #info{font-size:10.5px;color:#666;margin-top:6px;line-height:1.5}
+  #info{font-size:10.5px;color:var(--faint);margin-top:6px;line-height:1.5}
 
   /* connect overlay */
-  #overlay{position:absolute;inset:0;z-index:30;background:#000;display:flex;align-items:center;justify-content:center;
+  #overlay{position:absolute;inset:0;z-index:30;background:var(--bg);display:flex;align-items:center;justify-content:center;
            flex-direction:column;gap:18px}
   #overlay.hide{display:none}
-  #overlay .logo{font-size:20px;color:#9c9;letter-spacing:.12em}
+  #overlay .logo{font-size:20px;color:var(--ok);letter-spacing:.12em}
   #overlay button{min-width:200px;min-height:52px;border:0;border-radius:14px;background:var(--accent);
-                  color:#fff;font-size:16px}
-  .spin{width:28px;height:28px;border:3px solid #333;border-top-color:var(--accent);border-radius:50%;
+                  color:var(--accent-fg);font-size:16px}
+  .spin{width:28px;height:28px;border:3px solid var(--card2);border-top-color:var(--accent);border-radius:50%;
         animation:sp 1s linear infinite}
   @keyframes sp{to{transform:rotate(360deg)}}
 
   /* transient action overlay / undo toast (#44 #68) */
-  #toast{position:absolute;left:50%;bottom:calc(var(--ib) + 88px);transform:translateX(-50%);
-         z-index:40;display:flex;align-items:center;gap:10px;background:rgba(16,16,16,.95);
-         border:1px solid var(--line,#262626);border-radius:14px;padding:8px 14px;font-size:13px;
-         color:#eee;box-shadow:0 4px 18px rgba(0,0,0,.5);transition:opacity .25s}
-  #toast button{min-height:36px;border:0;border-radius:9px;background:var(--accent);color:var(--accent-fg,#fff);
+  #toast{position:absolute;left:50%;bottom:calc(var(--ib) + var(--ikb,0px) + 88px);transform:translateX(-50%);
+         z-index:40;display:flex;align-items:center;gap:10px;background:var(--pill);
+         border:1px solid var(--line);border-radius:14px;padding:8px 14px;font-size:13px;
+         color:var(--fg);box-shadow:0 4px 18px var(--shadow);transition:opacity .25s}
+  #toast button{min-height:36px;border:0;border-radius:9px;background:var(--accent);color:var(--accent-fg);
                 font-size:12px;padding:0 12px;font-weight:600}
+
+  /* accessibility (#53): visible focus for keyboard and switch users */
+  :focus{outline:none}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  /* prefers-reduced-motion: drop the sheet/toolbar animations (#53) */
+  @media (prefers-reduced-motion: reduce){
+    .sheet,.backdrop,#bar,#barHandle,#status,#toast{transition:none!important}
+    .touchRipple{animation:none!important;opacity:0}
+  }
+  /* tablet landscape (#52): sheets become centered side panels */
+  @media (orientation: landscape) and (min-width: 640px){
+    .sheet{max-width:560px;left:50%;right:auto;margin-right:0;transform:translate(-50%,-105%)}
+    .sheet.show{transform:translate(-50%,0)}
+  }
 </style>
 </head>
 <body>
@@ -260,6 +327,17 @@
       <span class="val" id="zoomVal">100%</span>
     </div>
     <div class="row"><label id="vpScale"></label></div>
+    <hr>
+    <h3 data-i18n="more.appearance">Appearance</h3>
+    <div class="row">
+      <label data-i18n="more.theme">Theme</label>
+      <select id="themeSel" aria-label="Theme">
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+        <option value="high">High contrast</option>
+        <option value="auto">Auto</option>
+      </select>
+    </div>
     <hr>
     <h3 data-i18n="more.connection">Connection</h3>
     <div class="stats" id="connBox">
@@ -699,6 +777,33 @@ function updateConnBox(){
 }
 function startPing(){ clearInterval(pingTimer); pingHealth(); pingTimer = setInterval(pingHealth, 5000); }
 function stopPing(){ clearInterval(pingTimer); pingTimer = null; setQuality('down'); }
+
+/* ------------------------------------------------------------------ *
+ *  Themes (#51): dark (default), light, high-contrast, auto           *
+ * ------------------------------------------------------------------ */
+const themeMQ = matchMedia('(prefers-color-scheme: light)');
+function resolveTheme(){
+  const pref = store.get('theme', 'dark');
+  if (pref === 'auto') return themeMQ.matches ? 'light' : 'dark';
+  return ['dark', 'light', 'high'].includes(pref) ? pref : 'dark';
+}
+function applyTheme(){
+  const t = resolveTheme();
+  root.setAttribute('data-theme', t);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = t === 'light' ? '#f2f2f4' : '#161616';
+  $('themeSel').value = store.get('theme', 'dark');
+}
+themeMQ.addEventListener?.('change', () => {
+  if (store.get('theme', 'dark') === 'auto') applyTheme();
+});
+$('themeSel').addEventListener('change', e => {
+  store.set('theme', e.target.value);
+  applyTheme();
+  status(e.target.value === 'auto' ? 'Theme: auto' :
+    'Theme: ' + e.target.value);
+});
+applyTheme();
 
 /* ------------------------------------------------------------------ *
  *  Sheets + toolbar                                                   *
