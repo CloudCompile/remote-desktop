@@ -1,7 +1,14 @@
-"""Runtime state: pins, display geometry state and versioned backups (#30).
+"""Runtime state: pins, feature settings, launch history, custom apps,
+display geometry state and versioned backups (#30).
 
 Ownership: everything the server persists between runs.
-- Pins: BASE_DIR/.pins.json (file-backed state, ADR-0005).
+- Pins: BASE_DIR/.pins.json — v2 format with named folders (#64); the flat
+  v1 list migrates on first load (existing pins appear under "Unfiled").
+- Settings: STATE_DIR/settings.json — opt-in toggles (#72 clipboard sync,
+  #76 geometry remembering).
+- Launch history: STATE_DIR/launch-history.json — recency ranking (#62).
+- Custom apps: STATE_DIR/custom-apps.json — user-defined launcher entries
+  (#63); rides along in backups/exports.
 - Display state: STATE_DIR/display.json — last client-requested geometry
   and DPI, bounded, consumed by session.sh on the next session start (#31).
 - Backups: STATE_DIR/backups/<version>-<timestamp>-<reason>/ snapshots of
@@ -30,10 +37,37 @@ PINS_FILE = os.path.join(config.BASE_DIR, ".pins.json")
 # relative names inside backups/archives
 _PIN_NAME = ".pins.json"
 _CLIP_NAME = ".cliphistory.json"
+_CUSTOM_NAME = "custom-apps.json"  # #63: custom apps ride along in state backups
+
+PIN_FOLDERS_MAX = 24
+PIN_NAME_MAX = 40
+UNFILED = "Unfiled"  # virtual folder: pins not assigned anywhere (#64)
 
 
 def state_dir():
     return config.STATE_DIR
+
+
+def _atomic_json(path, data):
+    """Atomic bounded-JSON write (#17 pattern): temp file in the same
+    directory, fsync, rename. Never raises."""
+    try:
+        d = os.path.dirname(path)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(data, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+        return True
+    except Exception:
+        return False
 
 
 def backups_dir():
@@ -45,29 +79,163 @@ def display_state_file():
 
 
 # ------------------------------------------------------------------ pins
+#
+# #64: pins grow named folders. File format v2 is
+#   {"version": 2, "order": [app id, ...], "folders": [{"name": ..., "apps": [...]}]}
+# v1 (a flat JSON list) is migrated on first load: existing pins surface in
+# the virtual "Unfiled" folder without any data change. A pin lives in the
+# `order` list exactly once and belongs to at most one folder.
+
+
+def _clean_folder(f):
+    """Validate one folder record; None when it should be dropped."""
+    if not isinstance(f, dict):
+        return None
+    name = str(f.get("name") or "").strip()[:PIN_NAME_MAX]
+    if not name or name.lower() == UNFILED.lower():
+        return None  # "Unfiled" is virtual, never stored
+    apps = []
+    for a in f.get("apps", []):
+        if isinstance(a, str) and a and len(a) < 200 and a not in apps:
+            apps.append(a)
+    return {"name": name, "apps": apps[:100]}
+
+
+def _load_pins_v2():
+    try:
+        with open(PINS_FILE) as f:
+            raw = json.load(f)
+    except Exception:
+        return {"version": 2, "order": [], "folders": []}
+    if isinstance(raw, list):  # v1 flat list — appear under "Unfiled" at once
+        order = [p for p in raw if isinstance(p, str) and p and len(p) < 200][:100]
+        return {"version": 2, "order": order, "folders": []}
+    if isinstance(raw, dict) and raw.get("version") == 2:
+        order = [p for p in raw.get("order", []) if isinstance(p, str) and p and len(p) < 200][:100]
+        seen_names = set()
+        folders = []
+        for f in raw.get("folders", []):
+            cf = _clean_folder(f)
+            if cf and cf["name"].lower() not in seen_names:
+                seen_names.add(cf["name"].lower())
+                folders.append(cf)
+        return {"version": 2, "order": order, "folders": folders[:PIN_FOLDERS_MAX]}
+    return {"version": 2, "order": [], "folders": []}
+
+
+def _save_pins_v2(data):
+    _atomic_json(PINS_FILE, data)
+
+
+def _folder_of(data, app_id):
+    for f in data["folders"]:
+        if app_id in f["apps"]:
+            return f["name"]
+    return None
 
 
 def load_pins():
-    try:
-        with open(PINS_FILE) as f:
-            pins = json.load(f)
-        if isinstance(pins, list):
-            return [p for p in pins if isinstance(p, str)]
-    except Exception:
-        pass
-    return []
+    """Back-compat flat ordered pin list."""
+    return _load_pins_v2()["order"]
+
+
+def pins_snapshot():
+    """Pins with folders (#64); "Unfiled" is computed, never stored."""
+    data = _load_pins_v2()
+    unfiled = [p for p in data["order"] if _folder_of(data, p) is None]
+    folders = [{"name": UNFILED, "apps": unfiled, "virtual": True}]
+    folders += [{"name": f["name"], "apps": f["apps"]} for f in data["folders"]]
+    return {"pins": data["order"], "folders": folders}
 
 
 def save_pins(pins):
+    """Replace the flat pin order (keeps folders that still reference valid pins)."""
     pins = [p for p in pins if isinstance(p, str) and len(p) < 200][:100]
-    tmp = PINS_FILE + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(pins, f)
-    os.replace(tmp, PINS_FILE)
-    try:
-        os.chmod(PINS_FILE, 0o600)
-    except OSError:
-        pass
+    data = _load_pins_v2()
+    data["order"] = pins
+    for f in data["folders"]:
+        f["apps"] = [a for a in f["apps"] if a in set(pins)]
+    _save_pins_v2(data)
+
+
+def pins_toggle(app_id):
+    """Add/remove a pin. Returns the new snapshot or None for a bad id."""
+    if not app_id or len(app_id) > 200:
+        return None
+    data = _load_pins_v2()
+    if app_id in data["order"]:
+        data["order"].remove(app_id)
+        for f in data["folders"]:
+            f["apps"] = [a for a in f["apps"] if a != app_id]
+    else:
+        data["order"].insert(0, app_id)
+    _save_pins_v2(data)
+    return pins_snapshot()
+
+
+def pins_reorder(ids):
+    """Set the pin order (#64). Unknown ids are appended, missing ones kept."""
+    if not isinstance(ids, list):
+        return None
+    ids = [str(i)[:200] for i in ids if isinstance(i, str) and i]
+    data = _load_pins_v2()
+    known = [p for p in data["order"] if p not in set(ids)]
+    data["order"] = (ids + known)[:100]
+    _save_pins_v2(data)
+    return pins_snapshot()
+
+
+def pins_folder_create(name):
+    """Create a pin folder (#64). Returns the snapshot or an error key."""
+    if not isinstance(name, str):
+        return {"error": "invalid name"}
+    name = name.strip()[:PIN_NAME_MAX]
+    if not name or name.lower() == UNFILED.lower():
+        return {"error": "invalid name"}
+    data = _load_pins_v2()
+    if any(f["name"].lower() == name.lower() for f in data["folders"]):
+        return {"error": "exists"}
+    if len(data["folders"]) >= PIN_FOLDERS_MAX:
+        return {"error": "too many folders"}
+    data["folders"].append({"name": name, "apps": []})
+    _save_pins_v2(data)
+    return pins_snapshot()
+
+
+def pins_folder_delete(name):
+    """Delete a folder; its pins stay pinned (back under Unfiled) (#64)."""
+    data = _load_pins_v2()
+    data["folders"] = [f for f in data["folders"] if f["name"] != name]
+    _save_pins_v2(data)
+    return pins_snapshot()
+
+
+def pins_assign(app_id, folder):
+    """Assign a pin to at most one folder ("" = unfile) (#64)."""
+    if not app_id or len(app_id) > 200 or not isinstance(folder, str):
+        return {"error": "invalid"}
+    data = _load_pins_v2()
+    if app_id not in data["order"]:
+        return {"error": "not pinned"}
+    folder = folder.strip()[:PIN_NAME_MAX]
+    if folder and folder.lower() != UNFILED.lower():
+        if not any(f["name"] == folder for f in data["folders"]):
+            r = pins_folder_create(folder)
+            if r.get("error"):
+                return r
+        data = _load_pins_v2()
+        for f in data["folders"]:
+            if app_id in f["apps"]:
+                f["apps"].remove(app_id)
+        for f in data["folders"]:
+            if f["name"] == folder:
+                f["apps"].insert(0, app_id)
+    else:
+        for f in data["folders"]:
+            if app_id in f["apps"]:
+                f["apps"].remove(app_id)
+    _save_pins_v2(data)
+    return pins_snapshot()
 
 
 # ------------------------------------------------------------- display state
@@ -104,7 +272,126 @@ def load_display_state():
     return None
 
 
-# ------------------------------------------------------------------ backups
+# ------------------------------------------------------------- app settings
+#
+# #72/#76: small opt-in feature toggles, persisted server-side so every
+# client (and the server itself) agrees on them. Booleans only.
+
+SETTINGS_DEFAULTS = {"clip_sync": False, "geo_remember": True}
+SETTINGS_KEYS = tuple(SETTINGS_DEFAULTS)
+
+
+def settings_file():
+    return os.path.join(state_dir(), "settings.json")
+
+
+def load_settings():
+    out = dict(SETTINGS_DEFAULTS)
+    try:
+        with open(settings_file()) as f:
+            raw = json.load(f)
+        if isinstance(raw, dict):
+            for k in SETTINGS_DEFAULTS:
+                if isinstance(raw.get(k), bool):
+                    out[k] = raw[k]
+    except Exception:
+        pass
+    return out
+
+
+def save_setting(key, value):
+    """Set one boolean toggle. Returns the new settings dict or None."""
+    if key not in SETTINGS_DEFAULTS or not isinstance(value, bool):
+        return None
+    cur = load_settings()
+    cur[key] = value
+    _atomic_json(settings_file(), cur)
+    return cur
+
+
+# ------------------------------------------------------------ launch history
+#
+# #62: launch timestamps feed the launcher ranking. Capped, atomic, purely
+# local (privacy-safe: app ids only, no arguments, no timestamps beyond
+# last-used).
+
+LAUNCH_HISTORY_MAX = 500
+LAUNCH_RECENT_DAYS = 7
+
+
+def launch_history_file():
+    return os.path.join(state_dir(), "launch-history.json")
+
+
+def load_launches():
+    try:
+        with open(launch_history_file()) as f:
+            raw = json.load(f)
+        if isinstance(raw, list):
+            out = []
+            for e in raw:
+                if isinstance(e, dict) and isinstance(e.get("id"), str) and e["id"]:
+                    try:
+                        ts = int(e.get("ts") or 0)
+                    except (TypeError, ValueError):
+                        ts = 0
+                    out.append({"id": e["id"][:200], "ts": ts})
+            return out
+    except Exception:
+        pass
+    return []
+
+
+def record_launch(app_id):
+    """Record one launch (most recent first, capped at 500 entries) (#62)."""
+    if not isinstance(app_id, str) or not app_id or len(app_id) > 200:
+        return False
+    items = [e for e in load_launches() if e["id"] != app_id]
+    items.insert(0, {"id": app_id, "ts": int(time.time())})
+    return _atomic_json(launch_history_file(), items[:LAUNCH_HISTORY_MAX])
+
+
+def clear_launches():
+    """Wipe launch history; pins and the app list are untouched (#62)."""
+    return _atomic_json(launch_history_file(), [])
+
+
+def recent_launches(days=LAUNCH_RECENT_DAYS):
+    """app id -> last launch ts within the window, newest-first deduped (#62)."""
+    cutoff = time.time() - days * 86400
+    out = {}
+    for e in load_launches():
+        if e["ts"] >= cutoff and e["id"] not in out:
+            out[e["id"]] = e["ts"]
+    return out
+
+
+# --------------------------------------------------------------- custom apps
+#
+# #63: user-defined launcher entries (no .desktop file needed). Commands are
+# argv VECTORS launched without a shell — validation lives in apps.py; this
+# module only stores validated entries.
+
+CUSTOM_APPS_MAX = 50
+
+
+def custom_apps_file():
+    return os.path.join(state_dir(), "custom-apps.json")
+
+
+def load_custom_apps():
+    try:
+        with open(custom_apps_file()) as f:
+            raw = json.load(f)
+        if isinstance(raw, list):
+            return [e for e in raw if isinstance(e, dict) and isinstance(e.get("cmd"), list)]
+    except Exception:
+        pass
+    return []
+
+
+def save_custom_apps(entries):
+    return _atomic_json(custom_apps_file(), entries[:CUSTOM_APPS_MAX])
 
 
 def _file_sha256(path):
@@ -123,9 +410,14 @@ def snapshot(reason="startup"):
     ones (keep BACKUP_KEEP). Returns the backup dir path or None."""
     srcs = {
         name: path
-        for name, path in (("pins", PINS_FILE), ("cliphistory", _clipboard.CLIP_HISTORY_FILE))
+        for name, path in (
+            ("pins", PINS_FILE),
+            ("cliphistory", _clipboard.CLIP_HISTORY_FILE),
+            ("custom-apps", custom_apps_file()),  # #63: custom entries travel with backups
+        )
         if os.path.isfile(path)
     }
+    arc_names = {"pins": _PIN_NAME, "cliphistory": _CLIP_NAME, "custom-apps": _CUSTOM_NAME}
     ts = time.strftime("%Y%m%d-%H%M%S")
     bdir = os.path.join(backups_dir(), f"v{STATE_VERSION}-{ts}-{reason}")
     try:
@@ -138,7 +430,7 @@ def snapshot(reason="startup"):
             "files": {},
         }
         for name, src in srcs.items():
-            dst = os.path.join(bdir, _PIN_NAME if name == "pins" else _CLIP_NAME)
+            dst = os.path.join(bdir, arc_names[name])
             shutil.copy2(src, dst)
             os.chmod(dst, 0o600)
             manifest["files"][name] = {
@@ -202,6 +494,9 @@ def export_state(path, include_secrets=False):
         if os.path.isfile(clip):
             shutil.copy2(clip, os.path.join(tmpd, _CLIP_NAME))
             copied.append(_CLIP_NAME)
+        if os.path.isfile(custom_apps_file()):  # #63
+            shutil.copy2(custom_apps_file(), os.path.join(tmpd, _CUSTOM_NAME))
+            copied.append(_CUSTOM_NAME)
         manifest = {
             "state_version": STATE_VERSION,
             "created": int(time.time()),
@@ -252,12 +547,19 @@ def import_state(path):
             if version < 1:
                 return {"ok": False, "error": "archive manifest has no valid state_version"}
             members = {mm.name for mm in tar.getmembers()}
-            for arcname, target in ((_PIN_NAME, PINS_FILE), (_CLIP_NAME, _clipboard.CLIP_HISTORY_FILE)):
+            for arcname, target in (
+                (_PIN_NAME, PINS_FILE),
+                (_CLIP_NAME, _clipboard.CLIP_HISTORY_FILE),
+                (_CUSTOM_NAME, custom_apps_file()),  # #63
+            ):
                 if arcname not in members:
                     continue
                 data = tar.extractfile(arcname).read()
                 json.loads(data.decode())  # raises on corrupt payloads
-                staged.append((data, target, "pins" if arcname == _PIN_NAME else "cliphistory"))
+                name = {_PIN_NAME: "pins", _CLIP_NAME: "cliphistory", _CUSTOM_NAME: "custom-apps"}.get(
+                    arcname, "custom-apps"
+                )
+                staged.append((data, target, name))
         # everything validated — replace live state atomically
         imported = []
         for data, target, name in staged:
