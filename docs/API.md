@@ -74,14 +74,55 @@ move state between hosts; the password hash is never included.
 | POST | `/api/clipboard/remove` | `{"id": "..."}` | Delete one item |
 | POST | `/api/clipboard/clear` | — | Clear history |
 
-## Files (`~/Downloads` by default)
+## Files & transfer
+
+Shared roots (#84): `RD_FILES_ROOTS=/data/projects:Projects:ro,/srv/media:Media:quota=1073741824`
+(default: single root from `RD_FILES_DIR`). Every path is relative to a root;
+`root` is the root id (`r0`, `r1`, …) or its label (case-insensitive). All
+operations are fd-contained (#91): symlinks and traversal payloads cannot
+escape a root. Limits: 2 GB per file, 8 MiB per chunk (sessions), and the
+`RD_FILES_RESERVE` free-space check (#89) refuses uploads that would cross it
+(HTTP 507).
 
 | Method | Path | Body / query | Description |
 |---|---|---|---|
-| GET | `/api/files` | — | `{"files":[{name,size,mtime}],"dir":"..."}` |
-| GET | `/api/download` | `?name=` | File download (`application/octet-stream`) |
-| POST | `/api/upload` | `?name=`, raw body | Upload a file (2 GB cap) |
-| POST | `/api/files/delete` | `{"name": "..."}` | Delete a file |
+| GET | `/api/files` | `?root=&path=&sort=name|size|mtime|type&dir=asc|desc&dirs_first=0|1` | Listing (#79/#81): `{ok, roots, root, root_label, readonly, path, entries:[{name,type,size,mtime,mode,owner,group}], dirs, files, disk:{free,total,used,reserve,quota,warn_pct}}` |
+| GET | `/api/files/roots` | — | Roots + startup errors (#84) |
+| GET | `/api/files/search` | `?root=&path=&q=&limit=` | Bounded recursive search (#81): `{matches:[entry+dir], scanned, truncated}` (caps: 4000 scanned / 200 results / 2 s) |
+| GET | `/api/files/content` | `?root=&path=&inline=0|1`, `Range`, `If-Range` | Ranged download (#83): 200/206, `Accept-Ranges`, `ETag`; malformed/multi/unsatisfiable ranges → 416 + `Content-Range: bytes */size`; `inline=1` serves safe MIME types only (#82 — SVG/HTML are never inline) |
+| GET | `/api/files/thumb` | `?root=&path=&size=` | Thumbnail (#82): small raster images stream the original; PDF/video/large images go through host tools into an mtime+size-keyed cache; 415 unsafe/unknown type, 501 no tool on host |
+| GET | `/api/files/audit` | `?limit=` | Audit records, newest last (#92) |
+| GET | `/api/files/transfers` | — | Transfer queue (#88): `{transfers:[{id,kind,name,path,size,offset,state,retries,pct}], aggregate}` |
+| GET | `/api/files/upload/status` | `?session=` | One session's acknowledged offset (#78) |
+| GET | `/api/download` | `?name=` | Legacy flat download (first root, `application/octet-stream`, now also range-capable) |
+| POST | `/api/upload` | `?name=`, raw body | Legacy single-shot upload (atomic #15, 2 GB cap, reserve-checked #89) |
+| POST | `/api/files/mkdir` | `{"root","path"}` | Create directory (and parents) |
+| POST | `/api/files/rename` | `{"root","path","name"}` | Rename within its directory; NFC/case collisions → 409 (#86) |
+| POST | `/api/files/move` | `{"root","paths":[],"dest","root2?","overwrite?"}` | Move (auto-renames on collision) |
+| POST | `/api/files/copy` | `{"root","paths":[],"dest","root2?","overwrite?"}` | Copy (cross-root aware) |
+| POST | `/api/files/delete` | `{"root","paths":[]}` (or legacy `{"name"}`) | Bulk delete; 200 all-deleted / 207 partial with per-item `failed` |
+| POST | `/api/files/chmod` | `{"root","path","mode"}` | Octal mode; setuid/setgid → 403 (#90) |
+| POST | `/api/files/archive` | `{"root","paths":[],"format":"zip|tar.gz|tar.xz","name"}` | Create archive (#85, `RD_ARCHIVE_CAP` cap) |
+| POST | `/api/files/extract` | `{"root","path","dest"}` | Safe extraction (#85): zip-slip/symlink members refused or skipped, total size capped |
+| POST | `/api/files/upload/init` | `{"root","path","name","size","sha256?","chunk_size?","session?"}` | Start or RESUME a session (#78) → `{session, offset, chunk_size, exists}`; resume returns the acknowledged offset |
+| POST | `/api/files/upload/chunk` | `?session=&offset=`, raw body, `X-Chunk-Sha256` | One verified chunk; wrong checksum → 400 (offset unchanged, retry), paused → 409, wrong offset → 409 |
+| POST | `/api/files/upload/complete` | `{"session"}` | Verify + atomic move into place; incomplete → 409, checksum → 400 |
+| POST | `/api/files/upload/cancel` | `{"session"}` | Drop the session and its partial data |
+| POST | `/api/files/transfers/pause` | `{"id"}` | Pause (acknowledged bytes kept) (#88) |
+| POST | `/api/files/transfers/resume` | `{"id"}` | Resume |
+| POST | `/api/files/transfers/cancel` | `{"id"}` | Cancel + clean partial data |
+| POST | `/api/files/transfers/retry` | `{"id"}` | Retry from the acknowledged offset |
+| POST | `/share` | multipart/form-data (`files`) | PWA share-target upload (#87): saves each part into the chosen root, 303 → `/` |
+
+File-error responses are JSON `{"ok": false, "error": "<client-safe>"}` with
+400 (invalid), 403 (read-only root, symlink, setuid), 404 (missing),
+409 (exists / paused / incomplete / collision), 413 (too large),
+503 (session cap), 507 (reserve/quota exceeded). Every mutating operation
+writes one audit record (#92): `ts, action, user, ip, rid, root, path, dest,
+size, result` — never file contents.
+
+See [FILES.md](FILES.md) for the containment model, storage layout, quotas
+and backup guidance.
 
 ## Audio
 

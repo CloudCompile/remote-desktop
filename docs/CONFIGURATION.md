@@ -8,7 +8,9 @@ Every setting, its environment variable, default and meaning — generated from 
 |---|---|---|---|
 | `RD_USER` | str | `admin` | Login username shown on the login page. |
 | `RD_PASSFILE` | path | `(redacted)` | File holding the crypt SHA-512 password hash (create with: `openssl passwd -6`). Contents are never logged. |
-| `RD_FILES_DIR` | path | `~/Downloads` | Directory for file upload/download (created if missing). |
+| `RD_FILES_DIR` | path | `~/Downloads` | Directory for file upload/download (created if missing). Used as the default (single) shared root. |
+| `RD_FILES_ROOTS` | str | `` | Shared roots for the file manager (#84): comma-separated PATH[:LABEL[:FLAGS]] with FLAGS "ro" and/or "quota=BYTES". Empty = single root from RD_FILES_DIR. Example: "/data/projects:Projects:ro,/srv/media:Media:quota=1073741824". |
+| `RD_FILES_RESERVE` | bytes | `67108864` | Free-space reserve per root (#89): uploads that would leave less free space are refused (0 disables). |
 | `RD_TRUSTED_PROXIES` | csv | `` | Comma-separated proxy IPs allowed to set X-Forwarded-For. |
 | `RD_BIND` | str | `127.0.0.1` | Address the control server binds. Keep the default and put an HTTPS proxy in front for remote access. |
 | `RD_PORT` | port | `8090` | TCP port for the single control server (HTTP + websocket + audio). |
@@ -33,6 +35,8 @@ Every setting, its environment variable, default and meaning — generated from 
 | `RD_VNC_RETRIES` | int | `5` | Reconnect attempts to the VNC server before a proxy gives up. |
 | `RD_VNC_BACKOFF` | float | `0.5` | Initial reconnect backoff in seconds (doubles, capped at 4s). |
 | `RD_STATE_DIR` | path | `~/.local/share/remote-desktop` | Directory for backups, display state and the state manifest. |
+| `RD_ARCHIVE_CAP` | bytes | `2147483648` | Maximum uncompressed size when creating or extracting an archive (#85). |
+| `RD_TRANSFER_RETENTION` | duration | `86400` | Seconds completed/failed transfer-queue jobs are kept before GC (#88). |
 | `RD_READY_CACHE` | duration | `2` | Seconds readiness probes (/api/ready) results are cached. |
 | `RD_CONFIG` | path | `(empty)` | Optional KEY=VALUE config file; real environment variables override it (precedence: defaults < file < environment). |
 
