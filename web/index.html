@@ -233,6 +233,26 @@
         animation:sp 1s linear infinite}
   @keyframes sp{to{transform:rotate(360deg)}}
 
+  /* audio sheet v2.5 (#94-#103,#106): meter, badges, media keys, diagnostics */
+  #audioMeter{flex:1;height:12px;border-radius:7px;background:var(--card2);position:relative;overflow:hidden;
+              border:1px solid var(--line);min-width:80px}
+  #audioMeterBar{position:absolute;left:0;top:0;bottom:0;width:0%;
+                 background:linear-gradient(90deg,var(--accent),var(--dot-fair) 75%,var(--dot-bad));
+                 transition:width .15s linear}
+  #audioFlags{position:fixed;top:calc(env(safe-area-inset-top,0px) + 8px);right:10px;z-index:96;display:flex;
+              gap:6px;pointer-events:none}
+  #audioFlags[hidden]{display:none}
+  #audioFlags span{display:flex;align-items:center;gap:5px;font-size:11px;padding:3px 9px;border-radius:999px;
+                   background:var(--pill);border:1px solid var(--line);color:var(--fg)}
+  #audioFlags .dot{width:8px;height:8px;border-radius:50%;background:var(--dot-bad);animation:recpulse 1.2s infinite}
+  @keyframes recpulse{0%,100%{opacity:1}50%{opacity:.35}}
+  #mediaKeys{gap:8px}
+  #mediaKeys button{flex:1 1 0;min-height:46px;min-width:0;border:0;border-radius:10px;background:var(--card2);
+                    color:var(--fg);font-size:17px;-webkit-tap-highlight-color:transparent}
+  #audioDiag{background:var(--card);border-radius:10px;padding:8px 10px;font-size:11.5px;line-height:1.55;
+             color:var(--muted);max-height:34vh;overflow-y:auto;white-space:pre-wrap;font-family:ui-monospace,monospace}
+  #audioDiag b{color:var(--fg);font-weight:500}
+
   /* transient action overlay / undo toast (#44 #68) */
   #toast{position:absolute;left:50%;bottom:calc(var(--ib) + var(--ikb,0px) + 88px);transform:translateX(-50%);
          z-index:40;display:flex;align-items:center;gap:10px;background:var(--pill);
@@ -342,14 +362,89 @@
     <h3 data-i18n="sheet.audio">Audio</h3>
     <div class="row"><button class="primary" id="audioStart" data-i18n="audio.start">Start</button><button id="audioStop" data-i18n="audio.stop">Stop</button></div>
     <div class="row">
-      <label>Codec</label>
+      <label data-i18n="audio.codec">Codec</label>
       <select id="audioCodec">
         <option value="opus" selected>Opus ~100 kbps (mobile data)</option>
         <option value="pcm">PCM raw (lowest latency)</option>
       </select>
     </div>
-    <div class="row"><label>Volume</label><input type="range" id="audioVol" min="0" max="1" step="0.05" value="0.9"></div>
+    <div class="row">
+      <label data-i18n="audio.quality">Quality</label>
+      <select id="audioQuality" aria-label="Audio quality">
+        <option value="auto" selected data-i18n="audio.qAuto">Auto (adaptive)</option>
+        <option value="low" data-i18n="audio.qLow">Low · 48 kbps</option>
+        <option value="medium" data-i18n="audio.qMedium">Medium · 96 kbps</option>
+        <option value="high" data-i18n="audio.qHigh">High · 160 kbps</option>
+        <option value="custom" data-i18n="audio.qCustom">Custom…</option>
+      </select>
+      <input type="number" id="audioBitrateCustom" min="16" max="320" step="8" value="96" style="width:84px" hidden aria-label="Custom bitrate, kilobits per second">
+      <span class="val" id="audioBitrateNow"></span>
+    </div>
+    <div class="row"><label data-i18n="audio.volume">Volume</label><input type="range" id="audioVol" min="0" max="1" step="0.05" value="0.9"></div>
+    <div class="row" id="audioMeterRow">
+      <label data-i18n="audio.level">Level</label>
+      <div id="audioMeter" aria-hidden="true"><div id="audioMeterBar"></div></div>
+      <span class="val" id="audioMeterState" style="flex:0 0 auto"></span>
+    </div>
     <div class="row"><button id="audioTest" data-i18n="audio.test">Play test tone</button></div>
+
+    <hr>
+    <h3 data-i18n="audio.sinkH">Output device</h3>
+    <div class="row">
+      <select id="audioSink" aria-label="Capture sink"></select>
+      <button id="audioSinkRefresh" class="step" data-i18n-aria="btn.refresh" aria-label="Refresh">⟳</button>
+    </div>
+    <div class="row">
+      <label data-i18n="audio.sinkVol">Device volume</label>
+      <input type="range" id="audioSinkVol" min="0" max="150" step="5" value="100">
+      <button id="audioSinkMute" aria-pressed="false" style="flex:0 0 auto" data-i18n="audio.mute">Mute</button>
+    </div>
+    <div class="row"><small id="audioNotice" hidden style="color:var(--dot-fair)"></small></div>
+
+    <div id="audioAppsBox" hidden>
+      <hr>
+      <h3 data-i18n="audio.appsH">Applications</h3>
+      <div id="audioApps"></div>
+    </div>
+
+    <hr>
+    <h3 data-i18n="audio.recH">Record desktop audio</h3>
+    <div class="row">
+      <button id="audioRec" data-i18n="audio.recStart">⏺ Start recording</button>
+      <select id="audioRecFmt" aria-label="Recording format" style="flex:0 0 150px">
+        <option value="opus">Opus (WebM)</option>
+        <option value="flac">FLAC (lossless)</option>
+      </select>
+    </div>
+    <div class="row"><small id="audioRecInfo"></small></div>
+    <div id="audioRecList"></div>
+
+    <div class="row">
+      <label data-i18n="audio.audioOnly">Audio-only mode (no desktop video)</label>
+      <input type="checkbox" id="audioOnlyChk" style="flex:0 0 auto">
+    </div>
+
+    <hr>
+    <h3 data-i18n="audio.mediaH">Media keys</h3>
+    <div class="row" id="mediaKeys">
+      <button type="button" data-mkey="prev" aria-label="Previous track">⏮</button>
+      <button type="button" data-mkey="playpause" aria-label="Play or pause">⏯</button>
+      <button type="button" data-mkey="next" aria-label="Next track">⏭</button>
+      <button type="button" data-mkey="voldown" aria-label="Volume down">🔉</button>
+      <button type="button" data-mkey="volup" aria-label="Volume up">🔊</button>
+      <button type="button" data-mkey="mute" aria-label="Mute">🔇</button>
+    </div>
+    <div class="row"><small id="mediaPlayer"></small></div>
+
+    <hr>
+    <h3 data-i18n="audio.diagH">Diagnostics</h3>
+    <div id="audioDiag" hidden></div>
+    <div class="row">
+      <button id="audioDiagRefresh" data-i18n="btn.refresh">Refresh</button>
+      <button id="audioDiagCopy" data-i18n="audio.diagCopy">Copy diagnostics</button>
+      <a id="audioDiagLink" href="https://github.com/CloudCompile/remote-desktop/blob/main/docs/TROUBLESHOOTING.md" target="_blank" rel="noopener" data-i18n="audio.trouble">Troubleshooting</a>
+    </div>
+
     <hr>
     <h3>Devices in — desktop browser only</h3>
     <div class="row" id="devRow" hidden>
@@ -357,6 +452,11 @@
       <button id="camInBtn">📷 Cam in</button>
     </div>
     <div class="row"><label id="devNote">Share this computer's microphone and webcam into the desktop. Hidden on phones and tablets.</label></div>
+  </div>
+
+  <div id="audioFlags" hidden>
+    <span id="recFlag" hidden><span class="dot" aria-hidden="true"></span>REC</span>
+    <span id="onlyFlag" hidden>🎧&nbsp;<span data-i18n="audio.onlyBadge">Audio only</span></span>
   </div>
 
   <div class="sheet" id="shFiles" role="dialog" aria-modal="true" aria-label="Files">
@@ -906,6 +1006,7 @@ function connect(){
     status('Connected');
     setQuality('');                      // unknown until the first ping
     startPing();                         // quality monitor every 5 s (#50)
+    if (audioWant && !audioRunning) setTimeout(() => { if (audioWant && !audioRunning) startAudio(); }, 800);  // #124: audio returns with the session
     if (touchReady && window.__touch?.setRfb) window.__touch.setRfb(rfb);  // re-bind touch layer
     else initTouchOnce();
     applyVpMode();
@@ -926,12 +1027,14 @@ function connect(){
       : (clean ? 'clean' : 'unknown');
     if (clean) {
       status('Disconnected');
-      $('overlay').classList.remove('hide');
-      $('ovSpin').style.display = 'none';
-      $('ovBtn').style.display = '';
+      if (!audioOnlyOn()) {              // audio-only keeps the shell clear (#98)
+        $('overlay').classList.remove('hide');
+        $('ovSpin').style.display = 'none';
+        $('ovBtn').style.display = '';
+      }
     } else {
       status('Connection lost – reconnecting…', true);
-      reconnectTimer = setTimeout(connect, reconnectDelay);
+      if (!audioOnlyOn()) reconnectTimer = setTimeout(connect, reconnectDelay);
       reconnectDelay = Math.min(reconnectDelay * 2, 15000);
     }
   });
@@ -1129,6 +1232,7 @@ function closeSheets(){
   if (typeof clipPollStop === 'function') clipPollStop();
   if (typeof stopSyncPoll === 'function') stopSyncPoll();
   winSeq++;   // cancel any in-flight thumbnail fills (#59)
+  if (typeof audioSheetStop === 'function') audioSheetStop();  // meter + rec poll stop with the sheet (#103)
   if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
 }
 $('backdrop').addEventListener('click', closeSheets);
@@ -1154,7 +1258,17 @@ addEventListener('keydown', e => {
 });
 $('bApps').addEventListener('click', () => { openSheet($('shApps')); loadApps(); });
 $('bStore').addEventListener('click', () => { openSheet($('shStore')); loadStoreBackend(); if (!$('shStore').dataset.loaded) storeDefault(); });
-$('bAudio').addEventListener('click', () => { openSheet($('shAudio')); updateAudioBtn(); });
+$('bAudio').addEventListener('click', () => {
+  openSheet($('shAudio'));
+  updateAudioBtn();
+  loadSinks();        // #94
+  loadAudioApps();    // #95
+  recPoll();          // #102
+  loadRecordings();
+  loadMediaStatus();  // #101
+  loadDiag();         // #106
+  meterStart();       // #103
+});
 $('bFiles').addEventListener('click', () => { openSheet($('shFiles')); loadFiles(); });
 $('bMore').addEventListener('click', () => {
   openSheet($('shMore'));
@@ -1761,6 +1875,7 @@ async function loadWindows(){
 async function fillThumbs(wins, seq){
   // one grab at a time with a gap: x11grab on a busy X server must never
   // queue up (#59) — the sheet stays interactive while this trickles in
+  if (audioOnlyOn()) return;   // #98: no thumbnails in audio-only mode
   for (const w of wins) {
     if (seq !== winSeq) return;
     const key = [w.x, w.y, w.w, w.h].join(',');
@@ -2953,23 +3068,98 @@ async function loadStats(){
 }
 
 /* ------------------------------------------------------------------ *
- *  Audio: Opus (WebM/MSE, ~100 kbps) or raw PCM (Web Audio)           *
+ *  Audio v2.5: Opus/WebM (MSE) or raw PCM (Web Audio) with            *
+ *  quality tiers + adaptive bitrate (#96), jitter/drift handling      *
+ *  (#99), a level meter (#103), codec probing with PCM fallback       *
+ *  (#100), sink + per-app controls (#94/#95), recording (#102),       *
+ *  media keys (#101), diagnostics (#106) and recovery across          *
+ *  visibility changes and reconnects (#124).                          *
  * ------------------------------------------------------------------ */
 const SR = 44100, CH = 2, FRAME_BYTES = CH * 2;
 let actx = null, reader = null, audioRunning = false, nextTime = 0, carry = new Uint8Array(0), gainNode = null;
-let audioEl = null, mseURL = null, pruneTimer = null;
+let audioEl = null, mseURL = null, pruneTimer = null, pcmAnalyser = null;
+let meterCtx = null, meterSrc = null, meterAn = null, meterTimer = null;
+let audioWant = false, lastOpusUrl = '', recSheetTimer = null, abrTimer = null, driftTimer = null;
 
-function updateAudioBtn(){ $('bAudio').classList.toggle('on', audioRunning); }
+const postJSON = (u, d) => fetch(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d || {}) }).then(r => r.json());
+
+// browser codec capabilities (#100): probed once, BEFORE any fetch — an
+// incompatible client never starts ffmpeg because it never asks for audio
+const AUDCAP = {
+  mse: typeof MediaSource !== 'undefined' && !!(MediaSource.isTypeSupported &&
+    MediaSource.isTypeSupported('audio/webm; codecs="opus"')),
+  webaudio: !!(window.AudioContext || window.webkitAudioContext),
+};
+
+// per-device prefs survive reconnects (#96/#98)
+const audPref = { get: (k, d) => store.get('aud_' + k, d), set: (k, v) => store.set('aud_' + k, v) };
+
+// playback health, surfaced in the diagnostics view (#99/#106)
+const aStats = {
+  underruns: 0, overruns: 0, resyncs: 0, undrunTick: 0, jitterMs: 0, bufMs: 0, targetMs: 300,
+  chunks: 0, lastArrival: 0, level: 0, peak: 0, clipping: false, codec: '', bitrate: 0,
+};
+
+const QUALITY_BITRATES = { low: 48, medium: 96, high: 160 };
+function wantBitrateK(){                    // kbps requested of the server
+  const mode = audPref.get('q', 'auto');
+  if (mode === 'custom') return Math.max(16, Math.min(320, parseInt(audPref.get('brc', '96'), 10) || 96));
+  if (mode === 'auto') return Math.max(16, Math.min(320, parseInt(audPref.get('autoBr', '96'), 10) || 96));
+  return QUALITY_BITRATES[mode] || 96;
+}
+function paintBitrateNow(){
+  const el = $('audioBitrateNow');
+  if (el) el.textContent = wantBitrateK() + ' kbps' + (audPref.get('q', 'auto') === 'auto' ? ' · auto' : '');
+}
+function currentStreamUrl(){ return '/api/audio.opus?bitrate=' + (wantBitrateK() * 1000); }
+
+function updateAudioBtn(){
+  $('bAudio').classList.toggle('on', audioRunning);
+  // recoverable-error UI (#124): a dropped stream turns Start into Retry
+  $('audioStart').textContent = (audioWant && !audioRunning)
+    ? i18nT('audio.retry', 'Retry') : i18nT('audio.start', 'Start');
+}
+
+function onChunkArrival(){
+  aStats.chunks++;
+  const now = performance.now();
+  if (aStats.lastArrival) {
+    const d = now - aStats.lastArrival;
+    aStats.jitterMs = aStats.jitterMs * 0.85 + Math.min(2000, Math.abs(d - 250)) * 0.15;  // rough arrival irregularity
+  }
+  aStats.lastArrival = now;
+}
 
 async function startAudio(){
   if (audioRunning) return;
+  // #100: unsupported browsers get actionable feedback, not silence — and
+  // no fetch is made, so the server never spawns ffmpeg for them
+  if (!AUDCAP.webaudio && !AUDCAP.mse) {
+    status(i18nT('audio.unsupported', 'This browser cannot play the audio stream (no WebAudio, no MSE/Opus).'), true);
+    return;
+  }
+  if ($('audioCodec').value === 'opus' && !AUDCAP.mse) {
+    $('audioCodec').value = 'pcm';
+    status(i18nT('audio.fallbackPcm', 'Opus/WebM is not supported here — falling back to raw PCM.'), true);
+  }
+  audioWant = true;
+  updateAudioBtn();
   return $('audioCodec').value === 'opus' ? startOpus() : startPCM();
+}
+
+function bufferedAheadMs(){
+  try {
+    const b = audioEl.buffered;
+    return b.length ? (b.end(b.length - 1) - audioEl.currentTime) * 1000 : 0;
+  } catch (_) { return 0; }
 }
 
 async function startOpus(){
   try {
     audioEl = audioEl || new Audio();
     audioEl.volume = parseFloat($('audioVol').value);
+    audioEl.playbackRate = 1.0;
+    ensureOpusMeter();
     const mse = new MediaSource();
     mseURL = URL.createObjectURL(mse);
     audioEl.src = mseURL;
@@ -2979,21 +3169,17 @@ async function startOpus(){
     });
     const sb = mse.addSourceBuffer('audio/webm; codecs="opus"');
     sb.mode = 'sequence';
-    const resp = await fetch('/api/audio.opus', { cache: 'no-store' });
+    const resp = await fetch(currentStreamUrl(), { cache: 'no-store' });
     if (!resp.ok || !resp.body) throw new Error('HTTP ' + resp.status);
+    lastOpusUrl = currentStreamUrl();
+    aStats.codec = 'opus'; aStats.bitrate = wantBitrateK();
     audioRunning = true;
     updateAudioBtn();
-    status('Audio streaming (Opus ~100 kbps)');
+    status('Audio streaming (Opus ' + wantBitrateK() + ' kbps)');
     audioEl.play().catch(() => {});
     let queue = [];
     sb.addEventListener('updateend', () => {
       if (!audioRunning) return;
-      try {   // live resync: if we lag too far behind, jump near the live edge
-        if (sb.buffered.length) {
-          const end = sb.buffered.end(sb.buffered.length - 1);
-          if (end - audioEl.currentTime > 1.2) audioEl.currentTime = Math.max(0, end - 0.2);
-        }
-      } catch (_) {}
       if (queue.length && !sb.updating) sb.appendBuffer(queue.shift());
     });
     // prune buffered data behind playback so memory doesn't grow forever
@@ -3004,6 +3190,13 @@ async function startOpus(){
         if (start < audioEl.currentTime - 30) sb.remove(start, audioEl.currentTime - 25);
       } catch (_) {}
     }, 20000);
+    // underrun: the buffer ran dry — widen the jitter target (#99)
+    // (on* assignment, not addEventListener: restarts must not stack handlers)
+    audioEl.onwaiting = () => {
+      aStats.underruns++; aStats.undrunTick++;
+      aStats.targetMs = Math.min(800, aStats.targetMs + 120);
+      audioEl.playbackRate = 1.0;
+    };
     reader = resp.body.getReader();
     (async () => {
       try {
@@ -3011,18 +3204,74 @@ async function startOpus(){
           const { value, done } = await reader.read();
           if (done || !audioRunning) break;
           if (!value || !value.length) continue;
+          onChunkArrival();
           queue.push(value);
           if (queue.length > 300) queue.splice(0, queue.length - 300); // don't hoard if stalled
           if (!sb.updating && queue.length) sb.appendBuffer(queue.shift());
         }
       } catch (_) {}
-      finally { audioRunning = false; updateAudioBtn(); }
+      finally { streamDied(); }
     })();
   } catch (e) {
     audioRunning = false;
     stopAudio();
+    streamDied();
     status('Audio failed: ' + e.message, true);
   }
+}
+
+function streamDied(){
+  // #124: a lost stream (network switch, PulseAudio restart, server
+  // 503) becomes a visible retry state instead of silence
+  const was = audioRunning;
+  audioRunning = false;
+  updateAudioBtn();
+  if (audioWant && was) status(i18nT('audio.lost', 'Audio lost — press Retry (or Start) to reconnect.'), true);
+}
+
+/* drift + jitter control (#99): nudge playbackRate and resync to the
+   live edge so a 60-minute session never accumulates unbounded delay */
+function driftTick(){
+  if (!audioRunning || !audioEl) return;
+  aStats.bufMs = bufferedAheadMs();
+  const t = aStats.targetMs / 1000;
+  if (aStats.bufMs > 5000) { resyncOpus(true); return; }   // backlog (tab was hidden)
+  if (aStats.bufMs > t * 2.2) audioEl.playbackRate = 1.06; // gently catch up
+  else if (aStats.bufMs > 0 && aStats.bufMs < t * 0.4) audioEl.playbackRate = 0.94;  // let the buffer fill
+  else audioEl.playbackRate = 1.0;
+}
+function resyncOpus(count){
+  try {
+    const b = audioEl.buffered;
+    if (!b.length) return;
+    const end = b.end(b.length - 1);
+    if (end - audioEl.currentTime > 1.2) {
+      audioEl.currentTime = Math.max(0, end - Math.max(0.2, aStats.targetMs / 1000));
+      audioEl.playbackRate = 1.0;
+      if (count) { aStats.overruns++; aStats.resyncs++; }
+    }
+  } catch (_) {}
+}
+
+/* adaptive bitrate (#96): auto mode walks the bitrate tier with the
+   measured RTT and buffer occupancy; manual presets stay put */
+function abrTick(){
+  if (!audioRunning || audPref.get('q', 'auto') !== 'auto') { aStats.undrunTick = 0; return; }
+  const rtt = (typeof rttMs === 'number') ? rttMs : null;
+  const br = wantBitrateK();
+  const underruns = aStats.undrunTick; aStats.undrunTick = 0;
+  if ((rtt !== null && rtt > 800) || aStats.bufMs > aStats.targetMs * 4 || underruns > 2) {
+    if (br > 48) setAutoBr(Math.max(48, br - 32));
+    return;
+  }
+  if (rtt !== null && rtt < 300 && aStats.bufMs < aStats.targetMs * 1.5 && underruns === 0) {
+    if (br < 160) setAutoBr(Math.min(160, br + 32));
+  }
+}
+function setAutoBr(k){
+  audPref.set('autoBr', String(k));
+  paintBitrateNow();
+  if (audioRunning && $('audioCodec').value === 'opus') { stopAudio(); startAudio(); }  // no page reload (#96)
 }
 
 async function startPCM(){
@@ -3033,7 +3282,8 @@ async function startPCM(){
     if (!resp.ok || !resp.body) throw new Error('HTTP ' + resp.status);
     reader = resp.body.getReader();
     carry = new Uint8Array(0);
-    nextTime = actx.currentTime + 0.25;
+    aStats.codec = 'pcm'; aStats.bitrate = 1411;
+    nextTime = actx.currentTime + aStats.targetMs / 1000;   // start buffered to the target (#99)
     audioRunning = true;
     updateAudioBtn();
     status('Audio streaming (PCM)');
@@ -3043,6 +3293,7 @@ async function startPCM(){
           const { value, done } = await reader.read();
           if (done || !audioRunning) break;
           if (!value || !value.length) continue;
+          onChunkArrival();
           const merged = new Uint8Array(carry.length + value.length);
           merged.set(carry); merged.set(value, carry.length);
           const frames = Math.floor(merged.length / FRAME_BYTES);
@@ -3061,36 +3312,306 @@ async function startPCM(){
             gainNode = actx.createGain();
             gainNode.gain.value = parseFloat($('audioVol').value);
             gainNode.connect(actx.destination);
+            pcmAnalyser = actx.createAnalyser();           // level meter tap (#103)
+            pcmAnalyser.fftSize = 1024;
+            gainNode.connect(pcmAnalyser);
           }
           src.connect(gainNode);
           const now = actx.currentTime;
-          if (nextTime < now + 0.05) nextTime = now + 0.05;      // underrun: skip ahead
-          if (nextTime > now + 0.6) nextTime = now + 0.25;       // backlog (tab was hidden): drop
+          const t = aStats.targetMs / 1000;
+          if (nextTime < now + 0.02) {                     // underrun (#99): re-buffer to the target
+            aStats.underruns++; aStats.undrunTick++;
+            aStats.targetMs = Math.min(800, aStats.targetMs + 120);
+            nextTime = now + t;
+          }
+          if (nextTime > now + t * 2.5) {                  // backlog (tab was hidden): drop (#99)
+            aStats.overruns++;
+            nextTime = now + t;
+          }
           src.start(nextTime);
           nextTime += buf.duration;
         }
       } catch (_) {}
-      finally { audioRunning = false; updateAudioBtn(); }
+      finally { streamDied(); }
     })();
   } catch (e) {
     audioRunning = false;
     stopAudio();
+    streamDied();
     status('Audio failed: ' + e.message, true);
   }
 }
-function stopAudio(){
+function stopAudio(explicit){
+  if (explicit) audioWant = false;
   audioRunning = false;
   gainNode = null;
   try { reader && reader.cancel(); } catch(_) {}
   reader = null; carry = new Uint8Array(0);
-  if (actx) { try { actx.close(); } catch(_) {} actx = null; }
+  if (actx) { try { actx.close(); } catch(_) {} actx = null; pcmAnalyser = null; }
   if (pruneTimer) { clearInterval(pruneTimer); pruneTimer = null; }
   if (audioEl) { try { audioEl.pause(); } catch(_) {} audioEl.removeAttribute('src'); }
   if (mseURL) { try { URL.revokeObjectURL(mseURL); } catch(_) {} mseURL = null; }
   updateAudioBtn();
 }
+
+/* ---- level meter (#103): passive tap, 5 Hz refresh, sheet-open only */
+function ensureOpusMeter(){
+  if (!AUDCAP.webaudio) return null;
+  try {
+    meterCtx = meterCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (!meterSrc) {
+      meterSrc = meterCtx.createMediaElementSource(audioEl);
+      meterAn = meterCtx.createAnalyser();
+      meterAn.fftSize = 1024;
+      meterSrc.connect(meterAn);
+      meterAn.connect(meterCtx.destination);
+    }
+    meterCtx.resume().catch(() => {});
+    return meterAn;
+  } catch (_) { return null; }
+}
+function currentAnalyser(){
+  if ($('audioCodec').value === 'opus') return meterAn;
+  return (actx && pcmAnalyser) ? pcmAnalyser : null;
+}
+function audioSheetOpen(){ return $('shAudio').classList.contains('show'); }
+function meterTick(){
+  if (!audioSheetOpen()) { meterStop(); return; }
+  meterTimer = setTimeout(meterTick, 200);   // throttled for battery (#103)
+  if (!audioRunning) { paintMeter(0, 0, 'off'); return; }
+  const an = currentAnalyser();
+  const stalled = performance.now() - aStats.lastArrival > 5000;
+  if (!an || stalled) { paintMeter(0, 0, 'stall'); return; }   // capture failure ≠ silence (#103)
+  try {
+    const buf = new Float32Array(an.fftSize);
+    an.getFloatTimeDomainData(buf);
+    let peak = 0, sum = 0;
+    for (let i = 0; i < buf.length; i++) { const v = buf[i]; peak = Math.max(peak, Math.abs(v)); sum += v * v; }
+    const rms = Math.sqrt(sum / buf.length);
+    aStats.level = rms; aStats.peak = peak; aStats.clipping = peak >= 0.99;
+    paintMeter(rms, peak, aStats.clipping ? 'clip' : (rms < 0.004 ? 'silent' : ''));
+  } catch (_) { paintMeter(0, 0, 'stall'); }
+}
+function meterStart(){ if (!meterTimer) meterTick(); }
+function meterStop(){
+  if (meterTimer) { clearTimeout(meterTimer); meterTimer = null; }
+  paintMeter(0, 0, 'off');
+}
+function paintMeter(rms, peak, state){
+  const bar = $('audioMeterBar'), txt = $('audioMeterState');
+  if (!bar) return;
+  bar.style.width = Math.min(100, Math.max(rms * 300, peak * 100)).toFixed(1) + '%';
+  txt.textContent = state === 'clip' ? i18nT('audio.mClip', 'clipping')
+    : state === 'silent' ? i18nT('audio.mSilent', 'silent')
+    : state === 'stall' ? i18nT('audio.mStall', 'capture stalled')
+    : state === 'off' ? '' : i18nT('audio.mLive', 'live');
+  txt.style.color = state === 'clip' ? 'var(--err)' : state === 'stall' ? 'var(--dot-fair)' : 'var(--muted)';
+}
+function audioSheetStop(){ meterStop(); if (recSheetTimer) { clearInterval(recSheetTimer); recSheetTimer = null; } }
+
+/* ---- sinks: selection + device volume/mute (#94) */
+let sinkDebounce = null;
+async function loadSinks(){
+  try {
+    const j = await fetch('/api/audio/sinks').then(r => r.json());
+    const sel = $('audioSink');
+    sel.textContent = '';
+    for (const s of j.sinks || []) {
+      const o = document.createElement('option');
+      o.value = s.name;
+      o.textContent = (s.description || s.name) + ' (' + s.state + (s.volume != null ? ' · ' + s.volume + '%' : '') + ')';
+      if (s.name === j.selected) o.selected = true;
+      sel.appendChild(o);
+    }
+    if (!j.sinks || !j.sinks.length) {
+      const o = document.createElement('option');
+      o.textContent = '—';
+      sel.appendChild(o);
+      sel.disabled = true;
+    } else sel.disabled = false;
+    if (j.volume != null) $('audioSinkVol').value = j.volume;
+    $('audioSinkMute').setAttribute('aria-pressed', j.mute ? 'true' : 'false');
+    $('audioSinkMute').classList.toggle('on', !!j.mute);
+    const n = $('audioNotice');
+    n.hidden = !j.notice; n.textContent = j.notice || '';
+  } catch (_) {}
+}
+$('audioSink').addEventListener('change', e => {
+  postJSON('/api/audio/sink', { name: e.target.value }).then(j => {
+    if (!j.ok) { status(j.error || 'sink switch failed', true); loadSinks(); }
+    else status('Capture sink → ' + e.target.value);
+  }).catch(() => {});
+});
+$('audioSinkRefresh').addEventListener('click', loadSinks);
+$('audioSinkVol').addEventListener('input', e => {
+  clearTimeout(sinkDebounce);
+  const v = parseInt(e.target.value, 10);
+  sinkDebounce = setTimeout(() => { postJSON('/api/audio/volume', { volume: v }).catch(() => {}); }, 400);  // debounced (#94)
+});
+$('audioSinkMute').addEventListener('click', e => {
+  const on = e.currentTarget.getAttribute('aria-pressed') === 'true';
+  postJSON('/api/audio/volume', { mute: !on }).then(() => loadSinks()).catch(() => {});
+});
+
+/* ---- per-application volume (#95): hidden entirely when unsupported */
+const appDeb = {};
+async function loadAudioApps(){
+  try {
+    const j = await fetch('/api/audio/apps').then(r => r.json());
+    const box = $('audioApps'), wrap = $('audioAppsBox');
+    if (!j.supported) { wrap.hidden = true; return; }   // #95: UI hides when unsupported
+    wrap.hidden = false;
+    box.textContent = '';
+    if (!j.apps.length) {
+      const s = document.createElement('small');
+      s.style.color = 'var(--muted)';
+      s.textContent = i18nT('audio.nothing', 'Nothing is playing on the desktop.');
+      box.appendChild(s);
+      return;
+    }
+    for (const g of j.apps) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      const lbl = document.createElement('label');
+      lbl.style.flex = '0 0 auto;max-width:40%';
+      lbl.textContent = g.app + (g.count > 1 ? ' ×' + g.count : '');
+      lbl.title = g.app;
+      const rng = document.createElement('input');
+      rng.type = 'range'; rng.min = '0'; rng.max = '150'; rng.step = '5';
+      rng.value = g.pref_volume != null ? g.pref_volume : (g.volume != null ? g.volume : 100);
+      rng.setAttribute('aria-label', i18nT('audio.appsH', 'Applications') + ': ' + g.app);
+      rng.addEventListener('input', () => {
+        clearTimeout(appDeb[g.app]);
+        appDeb[g.app] = setTimeout(() => {
+          postJSON('/api/audio/app-volume', { app: g.app, volume: parseInt(rng.value, 10) }).catch(() => {});
+        }, 400);
+      });
+      const mbtn = document.createElement('button');
+      mbtn.type = 'button'; mbtn.style.flex = '0 0 auto';
+      mbtn.textContent = g.mute || g.pref_mute ? '🔇' : '🔊';
+      mbtn.setAttribute('aria-pressed', (g.mute || g.pref_mute) ? 'true' : 'false');
+      mbtn.setAttribute('aria-label', i18nT('audio.mute', 'Mute') + ': ' + g.app);
+      mbtn.addEventListener('click', () => {
+        const mute = mbtn.getAttribute('aria-pressed') !== 'true';
+        postJSON('/api/audio/app-volume', { app: g.app, mute }).then(() => loadAudioApps()).catch(() => {});
+      });
+      row.appendChild(lbl); row.appendChild(rng); row.appendChild(mbtn);
+      box.appendChild(row);
+    }
+  } catch (_) {}
+}
+
+/* ---- recording (#102) */
+async function recPoll(){
+  try {
+    const st = await fetch('/api/audio/record').then(r => r.json());
+    const btn = $('audioRec'), flag = $('recFlag'), flags = $('audioFlags'), info = $('audioRecInfo');
+    btn.textContent = st.active ? i18nT('audio.recStop', '⏹ Stop recording') : i18nT('audio.recStart', '⏺ Start recording');
+    btn.classList.toggle('warn', !!st.active);
+    flag.hidden = !st.active;
+    flags.hidden = !(st.active || !$('onlyFlag').hidden);
+    if (st.active) {
+      const mm = String(Math.floor(st.seconds / 60)).padStart(2, '0'), ss = String(st.seconds % 60).padStart(2, '0');
+      info.textContent = 'REC ' + mm + ':' + ss + ' · ' + (st.bytes / 1048576).toFixed(1) + ' MB · ' +
+        st.name + ' · cap ' + st.max_minutes + ' min / ' + st.max_mb + ' MB';
+      loadRecordings();
+    } else if (!info.textContent) info.textContent = '';
+  } catch (_) {}
+}
+async function loadRecordings(){
+  try {
+    const j = await fetch('/api/audio/recordings').then(r => r.json());
+    const box = $('audioRecList');
+    box.textContent = '';
+    for (const r of (j.recordings || []).slice(0, 10)) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      const a = document.createElement('a');
+      a.href = r.download; a.download = r.name;
+      a.textContent = '⬇ ' + r.name + ' · ' + (r.size / 1048576).toFixed(1) + ' MB';
+      a.style.cssText = 'color:var(--fg);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+      row.appendChild(a);
+      box.appendChild(row);
+    }
+  } catch (_) {}
+}
+$('audioRec').addEventListener('click', async () => {
+  try {
+    const cur = await fetch('/api/audio/record').then(r => r.json());
+    if (cur.active) {
+      await postJSON('/api/audio/record', { action: 'stop' });
+      status(i18nT('audio.recSaved', 'Recording saved to the files root'));
+    } else {
+      const j = await postJSON('/api/audio/record', { action: 'start', format: $('audioRecFmt').value });
+      if (!j.ok) status(j.error || 'Recording failed', true);
+      else status(i18nT('audio.recOn', 'Recording desktop audio…'));
+    }
+    recPoll();
+  } catch (_) { status('Recording control failed', true); }
+});
+
+/* ---- media keys (#101): MPRIS when possible, XF86 keysyms otherwise */
+async function loadMediaStatus(){
+  try {
+    const j = await fetch('/api/media/status').then(r => r.json());
+    $('mediaPlayer').textContent = j.active ? i18nT('audio.player', 'Player') + ': ' + j.active : '';
+  } catch (_) {}
+}
+document.querySelectorAll('#mediaKeys button').forEach(b => {
+  b.addEventListener('click', async () => {
+    try {
+      const j = await postJSON('/api/media/keys', { key: b.dataset.mkey });
+      if (!j.ok) status(j.error || 'key failed', true);
+      else if (j.player) $('mediaPlayer').textContent = i18nT('audio.player', 'Player') + ': ' + j.player;
+    } catch (_) { status('key failed', true); }
+  });
+});
+
+/* ---- diagnostics (#106): identify capture vs encode vs transport vs playback */
+function redact(s){
+  let t = String(s == null ? '' : s);
+  t = t.replace(/\/(home|Users)\/[^\s"']+/g, '/~');                              // home paths
+  t = t.replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, 'x.x.x.x');           // IPs
+  t = t.replace(/unix:[^\s"']+/g, 'unix:[socket]');
+  return t;
+}
+async function loadDiag(){
+  try {
+    const srv = await fetch('/api/audio/diagnostics').then(r => r.json());
+    const el = $('audioDiag');
+    el.hidden = false;
+    const line = (k, v) => '<b>' + k + '</b> ' + v;
+    const rows = [
+      line('sink:', (srv.selected_sink || 'default') + (srv.fallback ? ' → fell back to ' + srv.effective_sink : ' (' + srv.effective_sink + ')')),
+      line('source:', srv.chosen_source),
+      line('pulse:', srv.pulse_ok ? 'running' : 'unreachable') + ', pactl ' + (srv.pactl ? 'ok' : 'missing') +
+        ', ffmpeg ' + (srv.ffmpeg ? 'ok' : 'missing'),
+      line('codec:', aStats.codec + ' @ ' + wantBitrateK() + ' kbps (' + audPref.get('q', 'auto') + ')' +
+        ' · browser MSE/Opus ' + (AUDCAP.mse ? 'yes' : 'NO') + ', WebAudio ' + (AUDCAP.webaudio ? 'yes' : 'NO')),
+      line('buffer:', 'target ' + aStats.targetMs + ' ms · now ' + Math.round(aStats.bufMs) + ' ms · jitter ~' + Math.round(aStats.jitterMs) + ' ms'),
+      line('health:', aStats.underruns + ' underruns · ' + aStats.overruns + ' overruns · ' + aStats.resyncs + ' resyncs'),
+      line('captures:', (srv.captures || []).length + ' (' + (srv.listeners || 0) + ' listener(s)) ' +
+        JSON.stringify(srv.captures || [])),
+      line('record:', srv.record && srv.record.active ? srv.record.name + ' ' + srv.record.seconds + 's' : 'idle'),
+      line('level:', 'rms ' + aStats.level.toFixed(4) + ' · peak ' + aStats.peak.toFixed(3) + (aStats.clipping ? ' · CLIPPING' : '')),
+      srv.notice ? line('notice:', redact(srv.notice)) : '',
+      srv.last_error ? line('last error:', redact(srv.last_error)) : '',
+      srv.ffmpeg_log ? line('ffmpeg log:', '\n' + redact(srv.ffmpeg_log).split('\n').slice(-6).join('\n')) : '',
+    ].filter(Boolean);
+    el.innerHTML = rows.map(r => '<div>' + r + '</div>').join('');
+  } catch (_) {}
+}
+$('audioDiagRefresh').addEventListener('click', () => { loadDiag(); loadSinks(); loadAudioApps(); });
+$('audioDiagCopy').addEventListener('click', async () => {
+  await loadDiag();
+  try {
+    await navigator.clipboard.writeText($('audioDiag').innerText);
+    status(i18nT('audio.diagCopied', 'Diagnostics copied (host details redacted)'));
+  } catch (_) { status('Copy failed', true); }
+});
+
 $('audioStart').addEventListener('click', startAudio);
-$('audioStop').addEventListener('click', () => { stopAudio(); status('Audio stopped'); });
+$('audioStop').addEventListener('click', () => { stopAudio(true); status('Audio stopped'); });
 $('audioTest').addEventListener('click', async () => {
   try { const r = await fetch('/api/audio/test'); const j = await r.json(); status(j.msg || 'test tone'); }
   catch(_) { status('Test failed', true); }
@@ -3103,10 +3624,65 @@ $('audioVol').addEventListener('input', e => {
   if (gainNode && actx) gainNode.gain.setTargetAtTime(v, actx.currentTime, 0.02);
   if (audioEl) audioEl.volume = v;
 });
-// mobile browsers auto-suspend audio contexts in background tabs
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && actx) actx.resume().catch(() => {});
+$('audioQuality').addEventListener('change', e => {
+  audPref.set('q', e.target.value);          // remembered per device (#96)
+  $('audioBitrateCustom').hidden = e.target.value !== 'custom';
+  paintBitrateNow();
+  if (audioRunning) { stopAudio(); startAudio(); }   // takes effect without a reload (#96)
 });
+$('audioBitrateCustom').addEventListener('change', e => {
+  audPref.set('brc', String(Math.max(16, Math.min(320, parseInt(e.target.value, 10) || 96))));
+  paintBitrateNow();
+  if (audioRunning && $('audioCodec').value === 'opus') { stopAudio(); startAudio(); }
+});
+
+// restore remembered preferences (#96/#98)
+$('audioQuality').value = ['auto', 'low', 'medium', 'high', 'custom'].includes(audPref.get('q', 'auto')) ? audPref.get('q', 'auto') : 'auto';
+$('audioBitrateCustom').hidden = $('audioQuality').value !== 'custom';
+$('audioBitrateCustom').value = audPref.get('brc', '96');
+paintBitrateNow();
+
+/* ---- audio-only mode (#98): framebuffer off, audio + clipboard on */
+function audioOnlyOn(){ return audPref.get('only', '0') === '1'; }
+function paintAudioOnly(){
+  const on = audioOnlyOn();
+  $('audioOnlyChk').checked = on;
+  $('onlyFlag').hidden = !on;
+  $('audioFlags').hidden = !on && $('recFlag').hidden;
+}
+function setAudioOnly(on){
+  audPref.set('only', on ? '1' : '0');
+  paintAudioOnly();
+  if (on) {
+    // stop framebuffer traffic but keep reconnect + clipboard reachable
+    if (rfb) { userDisconnected = true; try { rfb.disconnect(); } catch(_) {} rfb = null; }
+    screenEl.textContent = '';
+    $('overlay').classList.add('hide');
+    status(i18nT('audio.onlyOn', 'Audio-only mode: desktop video is paused'));
+  } else {
+    status(i18nT('audio.onlyOff', 'Restoring desktop…'));
+    connect();
+  }
+}
+$('audioOnlyChk').addEventListener('change', e => setAudioOnly(e.target.checked));
+if (audioOnlyOn()) { $('overlay').classList.add('hide'); paintAudioOnly(); }
+
+// mobile browsers auto-suspend audio contexts in background tabs (#124)
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  if (actx) actx.resume().catch(() => {});
+  if (meterCtx) meterCtx.resume().catch(() => {});
+  // a stream that died while backgrounded comes back without a reload
+  if (audioWant && !audioRunning) setTimeout(() => { if (audioWant && !audioRunning) startAudio(); }, 600);
+});
+
+// adaptive + drift controllers (#96/#99)
+setInterval(abrTick, 5000);
+setInterval(() => { if (audioRunning && $('audioCodec').value === 'opus') driftTick(); }, 1000);
+
+// persistent recording indicator, even with the sheet closed (#102)
+recPoll();
+setInterval(recPoll, 15000);
 
 /* ------------------------------------------------------------------ *
  *  Devices in: share THIS computer's mic and webcam into the desktop  *
@@ -3417,7 +3993,7 @@ for (const id of BAR_DEFAULT) {
 paintBar();
 
 applyInsets();
-connect();
+if (!audioOnlyOn()) connect();   // audio-only boot skips the framebuffer (#98); exiting the mode calls connect()
 </script>
 </body>
 </html>
