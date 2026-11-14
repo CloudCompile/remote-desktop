@@ -2,6 +2,7 @@
 aiortc<->aiortc loopback media flow (no browser, no X server needed —
 the server's capture is injected as silent/static test tracks)."""
 import asyncio
+import os
 import json
 
 import pytest
@@ -73,6 +74,8 @@ def _aiortc_ok():
 
 
 @pytest.mark.skipif(not _aiortc_ok(), reason="aiortc extra not installed")
+@pytest.mark.skipif(os.environ.get("WEBRTC_SELFTEST") != "1",
+                    reason="loopback ICE needs UDP; run with WEBRTC_SELFTEST=1")
 def test_webrtc_loopback_media():
     """aiortc client peer <-> server handle_offer: both audio and video
     tracks flow end to end. Runs the server's media loop machinery for
