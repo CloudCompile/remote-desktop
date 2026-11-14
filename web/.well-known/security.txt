@@ -1,0 +1,8 @@
+# RFC 9116 security.txt for CloudCompile/remote-desktop
+Contact: mailto:security@cloudcompile.dev
+Contact: https://github.com/CloudCompile/remote-desktop/security/advisories/new
+Expires: 2027-11-13T00:00:00.000Z
+Encryption: https://github.com/CloudCompile/remote-desktop#securing-deployments
+Preferred-Languages: en
+Canonical: https://github.com/CloudCompile/remote-desktop/blob/main/web/.well-known/security.txt
+Policy: https://github.com/CloudCompile/remote-desktop/blob/main/SECURITY.md
