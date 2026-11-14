@@ -66,9 +66,9 @@ def available():
 
 # ------------------------------------------------------------- peer loop
 
-_loop = None          # the media event loop (aiortc wants one thread)
+_loop = None  # the media event loop (aiortc wants one thread)
 _loop_started = threading.Event()
-_peers = set()        # live RTCPeerConnections
+_peers = set()  # live RTCPeerConnections
 _MAX_PEERS = 4
 
 
@@ -88,14 +88,19 @@ def _ensure_loop():
 
 # ------------------------------------------------------------- tracks
 
+
 def _video_size():
     """Current display geometry, for the capture size (falls back to the
     configured RD_GEOMETRY)."""
     try:
         import subprocess
+
         out = subprocess.run(
             ["xdotool", "getdisplaygeometry"],
-            env=config.ENV, capture_output=True, text=True, timeout=4,
+            env=config.ENV,
+            capture_output=True,
+            text=True,
+            timeout=4,
         )
         w, h = out.stdout.strip().split()
         return f"{w}x{h}"
@@ -110,12 +115,11 @@ def _make_tracks(m):
 
     disp = config.ENV.get("DISPLAY", ":1")
     video = m["MediaPlayer"](
-        disp, format="x11grab",
+        disp,
+        format="x11grab",
         options={"video_size": _video_size(), "framerate": "24"},
     ).video
-    audio_tr = m["MediaPlayer"](
-        f"pulse://{audio.audio_source()}", format="pulse"
-    ).audio
+    audio_tr = m["MediaPlayer"](f"pulse://{audio.audio_source()}", format="pulse").audio
     return video, audio_tr
 
 
@@ -129,9 +133,9 @@ def handle_offer(sdp: str, type_: str, user: str):
     _ensure_loop()
 
     pc = m["RTCPeerConnection"](
-        m["RTCConfiguration"](iceServers=[
-            m["RTCIceServer"](urls=config.WEBRTC_STUN.split(","))
-        ]) if config.WEBRTC_STUN else None
+        m["RTCConfiguration"](iceServers=[m["RTCIceServer"](urls=config.WEBRTC_STUN.split(","))])
+        if config.WEBRTC_STUN
+        else None
     )
     _peers.add(pc)
 
@@ -184,5 +188,4 @@ def stop_all():
 
 
 def status():
-    return {"enabled": config.WEBRTC, "available": available()[0],
-            "reason": available()[1], "peers": len(_peers)}
+    return {"enabled": config.WEBRTC, "available": available()[0], "reason": available()[1], "peers": len(_peers)}

@@ -1,6 +1,7 @@
 """WebRTC transport tests (#137): gating, signalling route, and a real
 aiortc<->aiortc loopback media flow (no browser, no X server needed —
 the server's capture is injected as silent/static test tracks)."""
+
 import asyncio
 import os
 import json
@@ -12,11 +13,14 @@ from remote_desktop import config
 
 # ------------------------------------------------------------ gating
 
+
 def _boot(tmp_path_factory, monkeypatch):
     import crypt as _crypt
     import sys as _sys
+
     _sys.path.insert(0, "tests")
     from test_integration import TEST_PASSWORD, Server, _free_port
+
     tmp = tmp_path_factory.mktemp("webrtc")
     pf = tmp / ".passhash"
     pf.write_text(_crypt.crypt(TEST_PASSWORD, _crypt.mksalt(_crypt.METHOD_SHA512)) + "\n")
@@ -27,6 +31,7 @@ def _boot(tmp_path_factory, monkeypatch):
 
 def test_webrtc_disabled_by_default():
     from remote_desktop import webrtc
+
     ok, reason = webrtc.available()
     if not config.WEBRTC:
         assert not ok and reason
@@ -36,6 +41,7 @@ def test_offer_route_501_when_disabled(tmp_path_factory, monkeypatch):
     s = _boot(tmp_path_factory, monkeypatch)
     try:
         from test_integration import _login
+
         code_, cookie = _login(s, ip="192.0.2.31")
         assert code_ == 200
         code, _, body = s.request("/api/webrtc/offer", data={"sdp": "v=0 x", "type": "offer"}, cookie=cookie)
@@ -51,6 +57,7 @@ def test_offer_route_rejects_garbage_sdp(tmp_path_factory, monkeypatch):
     s = _boot(tmp_path_factory, monkeypatch)
     try:
         from test_integration import _login
+
         code_, cookie = _login(s, ip="192.0.2.32")
         assert code_ == 200
         code, _, body = s.request("/api/webrtc/offer", data={"sdp": "nonsense", "type": "offer"}, cookie=cookie)
@@ -65,17 +72,20 @@ def test_offer_route_rejects_garbage_sdp(tmp_path_factory, monkeypatch):
 
 # ------------------------------------------------- loopback media flow
 
+
 def _aiortc_ok():
     try:
         import aiortc  # noqa: F401
+
         return True
     except ImportError:
         return False
 
 
 @pytest.mark.skipif(not _aiortc_ok(), reason="aiortc extra not installed")
-@pytest.mark.skipif(os.environ.get("WEBRTC_SELFTEST") != "1",
-                    reason="loopback ICE needs UDP; run with WEBRTC_SELFTEST=1")
+@pytest.mark.skipif(
+    os.environ.get("WEBRTC_SELFTEST") != "1", reason="loopback ICE needs UDP; run with WEBRTC_SELFTEST=1"
+)
 def test_webrtc_loopback_media():
     """aiortc client peer <-> server handle_offer: both audio and video
     tracks flow end to end. Runs the server's media loop machinery for
@@ -86,6 +96,7 @@ def test_webrtc_loopback_media():
 def _aiortc_ok():
     try:
         import aiortc  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -146,13 +157,15 @@ async def _loopback():
                     received[track.kind] += 1
                 except Exception:
                     break
+
         asyncio.ensure_future(pump())
 
     await pc_server.setRemoteDescription(RTCSessionDescription(**(await _client_offer(pc_client))))
     ans = await pc_server.createAnswer()
     await pc_server.setLocalDescription(ans)
-    await pc_client.setRemoteDescription(RTCSessionDescription(sdp=pc_server.localDescription.sdp,
-                                                              type=pc_server.localDescription.type))
+    await pc_client.setRemoteDescription(
+        RTCSessionDescription(sdp=pc_server.localDescription.sdp, type=pc_server.localDescription.type)
+    )
 
     # wait for media to flow both ways
     for _ in range(150):
