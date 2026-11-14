@@ -655,7 +655,12 @@ async function rtcStart(){
   if (rtcPc) return;
   $('rtcNote').textContent = 'starting…';
   try {
-    rtcPc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    rtcPc = new RTCPeerConnection({
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+      ],
+    });
     rtcPc.addTransceiver('audio', { direction: 'recvonly' });
     rtcPc.addTransceiver('video', { direction: 'recvonly' });
     rtcPc.ontrack = e => {
@@ -695,7 +700,9 @@ async function rtcStart(){
     // is not implemented by this simple HTTP offer/answer endpoint.
     if (rtcPc.iceGatheringState !== 'complete') {
       await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('ICE candidate gathering timed out; check STUN/UDP access')), 12000);
+        // A short grace: if STUN is slow or blocked we still send the host
+        // candidates we have; the connection state will name the failure.
+        const timer = setTimeout(() => resolve(), 4000);
         const done = () => {
           if (rtcPc && rtcPc.iceGatheringState === 'complete') {
             clearTimeout(timer);
