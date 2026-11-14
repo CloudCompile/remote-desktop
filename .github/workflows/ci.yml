@@ -47,13 +47,18 @@ jobs:
           import re, pathlib
           sw = pathlib.Path("web/sw.js").read_text()
           srv = pathlib.Path("remote_desktop/config.py").read_text()
+          idx = pathlib.Path("web/index.html").read_text()
           sw_v = re.search(r"const VERSION = '([^']+)'", sw).group(1).lstrip("v")
           srv_v = re.search(r'VERSION = "([^"]+)"', srv).group(1).lstrip("v")
-          if sw_v != srv_v:
-              print(f"web/sw.js cache version {sw_v!r} != server version {srv_v!r} — "
-                    "bump const VERSION in web/sw.js on every release")
-              raise SystemExit(1)
-          print(f"sw cache version matches server: {sw_v}")
+          reg = re.search(r"serviceWorker\.register\('/sw\.js\?v=([^']+)'", idx)
+          meta = re.search(r'app-version" content="([^"]+)"', idx)
+          reg_v = (reg.group(1) if reg else "")
+          meta_v = (meta.group(1) if meta else "").lstrip("v")
+          for label, got in (("web/sw.js VERSION", sw_v), ("index.html register ?v=", reg_v), ("index.html app-version", meta_v)):
+              if got != srv_v:
+                  print(f"{label} = {got!r} != server version {srv_v!r} — bump on every release")
+                  raise SystemExit(1)
+          print(f"client versions match server: {srv_v}")
           PY
 
       - name: Docs links
