@@ -476,6 +476,14 @@ def origin_ok(handler):
             return False
         if netloc == handler.headers.get("Host", ""):
             return True
+        # behind a trusted reverse proxy the Host header is the proxy
+        # target (e.g. 127.0.0.1:8090) — the public origin arrives in
+        # X-Forwarded-Host; trust it only from a trusted peer (#116)
+        xf = handler.headers.get("X-Forwarded-Host", "")
+        if xf:
+            peer = handler.client_address[0] if handler.client_address else ""
+            if peer in TRUSTED_PROXIES and netloc == xf.split(",")[0].strip():
+                return True
         if netloc in config.ALLOWED_ORIGINS:
             return True
         return False
