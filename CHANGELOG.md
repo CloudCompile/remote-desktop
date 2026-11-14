@@ -10,6 +10,43 @@ Format: [Keep a Changelog](https://keepachangelog.com/), semver.
 - v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones, release themes
   and linked issues.
 
+## [2.6.0] — 2026-11-14
+
+### Added
+
+- Multi-user accounts with isolated sessions: a stdlib user store
+  (crypt SHA-512), automatic migration of single-user deployments, and
+  viewer/operator/admin role caps enforced per endpoint (#111, #112).
+- TOTP two-factor authentication with recovery codes, implemented in
+  pure-stdlib RFC 6238 (#109).
+- Optional passkey/WebAuthn login behind an opt-in flag (#110).
+- Session and device management: persistent registry, device labels,
+  immediate revoke, per-user session caps (#114).
+- CSRF double-submit tokens plus Origin/Sec-Fetch-Site validation on
+  every state-changing endpoint (#116).
+- Strict CSP and security headers on every response (#117).
+- Tamper-evident audit log: hash-chained JSONL with rotation that
+  preserves recent events and a chain-verification endpoint (#113).
+- Per-user isolation for file roots, clipboard histories and pins
+  (#120).
+- Signing-key rotation with a grace window — no downtime, no restart
+  (#118).
+- Hardened cookies: Secure flag, optional __Host- prefix, proxy
+  awareness (#119).
+- Persistent rate limiting with fail2ban-friendly events (#115).
+- Login notifications and new-device alerts (#123).
+- Confirmation flows for sensitive actions (#121).
+- Optional VNC password (pure-stdlib classic VNC auth) with fail-closed
+  proxy behaviour and loopback-exposure warnings (#122).
+- Security regression suite under tests/security/ (#125).
+- docs/SECURITY-POSTURE.md: threat model and STRIDE review with
+  accepted risks and review cadence (#126).
+- RFC 9116 security.txt and a refreshed disclosure workflow with
+  response targets, safe harbour and a compromised-host runbook (#127).
+- CodeQL for Python and JavaScript, grouped Dependabot updates, and a
+  CycloneDX SBOM attached to every release; GitHub Actions pinned by
+  commit SHA (#128).
+
 ## [2.5.0] — 2026-11-13
 
 ### Added
