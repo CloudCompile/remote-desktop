@@ -71,11 +71,10 @@ def verify(secret_b32, code, window=DRIFT_WINDOW, at=None, step=STEP):
 
 def otpauth_uri(user, secret_b32, issuer="Remote Desktop"):
     """The enrollment URI accepted by every common authenticator app."""
-    label = f"{issuer}:{user}"
     from urllib.parse import quote
 
     return (
-        f"otpauth://totp/{quote(label)}?secret={secret_b32}"
+        f"otpauth://totp/{quote(issuer)}:{quote(user)}?secret={secret_b32}"
         f"&issuer={quote(issuer)}&algorithm=SHA1&digits={DIGITS}&period={STEP}"
     )
 

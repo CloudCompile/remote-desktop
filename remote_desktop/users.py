@@ -146,11 +146,27 @@ def _save(data):
 def _mutate(fn):
     """Read-modify-write under the lock; reloads from disk first so CLI
     (``--user-add``) and a running server converge. fn(data) mutates or
-    returns an error string."""
+    returns an error string. A fresh store always starts with the
+    migrated default admin (#111)."""
     with _lock:
         data = _load(force=True)
         if data is None:
             data = {"version": USERS_VERSION, "users": {}}
+            try:
+                legacy = open(config.PASS_FILE).read().strip()
+            except Exception:
+                legacy = ""
+            if legacy and config.AUTH_USER not in data["users"]:
+                data["users"][config.AUTH_USER] = {
+                    "hash": legacy,
+                    "role": "admin",
+                    "status": "active",
+                    "created": int(time.time()),
+                    "display": config.DISPLAY,
+                    "totp": {},
+                    "recovery": [],
+                    "last_login": 0,
+                }
         err = fn(data)
         if err:
             return err

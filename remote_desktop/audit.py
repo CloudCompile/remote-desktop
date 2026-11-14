@@ -114,10 +114,8 @@ def append_record(path, rec, max_bytes=None, keep=None):
                     src = path if i == 1 else f"{path}.{i - 1}"
                     dst = f"{path}.{i}"
                     if os.path.exists(src):
-                        if i == keep:
-                            os.remove(src)
-                        else:
-                            os.replace(src, dst)
+                        # shifting into the last slot prunes it (replace)
+                        os.replace(src, dst)
             rec = dict(rec)
             rec["prev"] = last
             rec["h"] = _digest(last, rec)
@@ -139,6 +137,7 @@ def event(
     result="ok",
     detail=None,
     path=None,
+    size=None,
 ):
     """Record one security-relevant event (#113). `handler` supplies the
     client ip + request id when available. Never contains secrets."""
@@ -156,6 +155,8 @@ def event(
             "target": _clean(target, 300) if target else None,
             "result": _clean(result, 20),
         }
+        if size is not None:  # #92: transfer rows carry the byte count
+            rec["size"] = int(size)
         if detail:
             rec["detail"] = {
                 _clean(str(k), 40): _clean(v, 200)
@@ -173,7 +174,10 @@ def read(path=None, kind=None, q=None, limit=200):
     action/user/target. Bounded read."""
     path = path or _path()
     out = []
-    for p in (f"{path}.1", path):  # recent history across the rotation seam
+    # all kept generations (oldest first) + live, across the rotation seam;
+    # AUDIT_KEEP may be overridden by tests, so enumerate what exists
+    gens = [f"{path}.{i}" for i in range(min(max(AUDIT_KEEP, 1), 16), 0, -1)] + [path]
+    for p in gens:
         try:
             with open(p, "rb") as f:
                 data = f.read(2 * AUDIT_MAX)
@@ -208,16 +212,21 @@ def read(path=None, kind=None, q=None, limit=200):
 def verify(path=None):
     """Re-walk the chain across every generation (.N ... .1, live):
     (ok, first_bad_index, checked). Detects edited records and removed
-    generations (#113 acceptance)."""
+    generations (#113 acceptance).
+
+    The OLDEST kept generation starts a new chain root: older generations
+    are pruned by rotation, so their hashes are legitimately absent. The
+    root entry is still tamper-checked (its own `h` must match its body),
+    and every following record must link to it."""
     path = path or _path()
     gens = []
     for i in range(AUDIT_KEEP, 0, -1):
-        p = path if i == 1 else f"{path}.{i}"
+        p = f"{path}.{i}"  # .N = rotated generations; the live file has no suffix
         if os.path.exists(p):
             gens.append(p)
-    if not gens:
-        gens = [path]
-    prev = "0" * 64
+    if os.path.exists(path):  # live file, always checked last
+        gens.append(path)
+    prev = None  # seeded by the oldest kept generation's first record
     i = 0
     for gen in gens:
         try:
@@ -227,10 +236,10 @@ def verify(path=None):
                         rec = json.loads(raw)
                     except ValueError:
                         return (False, i, i)
-                    if rec.get("prev") != prev:
+                    if prev is not None and rec.get("prev") != prev:
                         return (False, i, i)
                     body = {k: v for k, v in rec.items() if k != "h"}
-                    expect = _digest(prev, body)
+                    expect = _digest(rec.get("prev") or "0" * 64, body)
                     if expect != rec.get("h"):
                         return (False, i, i)
                     prev = rec["h"]

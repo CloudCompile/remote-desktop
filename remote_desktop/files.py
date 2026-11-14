@@ -506,8 +506,9 @@ def default_root(user=None, cap=0):
     return allowed[0] if allowed else None
 
 
-def roots_public():
-    return [r.public() for r in ROOTS]
+def roots_public(user=None, cap=0):
+    """Public view of the roots visible to one request (#120)."""
+    return [r.public() for r in roots_for_user(user, cap)]
 
 
 # ---------------------------------------------------------------- listing & operations (#79, #81)

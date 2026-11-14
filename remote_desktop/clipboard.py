@@ -143,7 +143,12 @@ def clipboard_get():
 
 def clipboard_set(text, user=None):
     """Write the text into BOTH X selections so any app can paste it
-    (Ctrl+V apps read CLIPBOARD, terminals/middle-click read PRIMARY)."""
+    (Ctrl+V apps read CLIPBOARD, terminals/middle-click read PRIMARY).
+
+    #120: the item is recorded in the REQUESTING user's history (the API
+    path); the X watcher keeps its own global stream, so a phone-side
+    write never lands in another account's list. A missing user record
+    (`user` None) keeps the legacy single-user behaviour."""
     if not text:
         return {"ok": False, "error": "empty text"}
     ok_cb = _clip_set("clipboard", text)

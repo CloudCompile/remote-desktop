@@ -41,6 +41,16 @@ def _free_port():
     return port
 
 
+def _merge_headers(resp):
+    """Duplicate headers (Set-Cookie!) must survive: join with ', ' per
+    RFC 9110. dict(r.headers) silently kept only the LAST one, which made
+    every login-derived cookie test read the wrong cookie (#125)."""
+    out = {}
+    for k, v in resp.headers.items():
+        out[k] = f"{out[k]}, {v}" if k in out else v
+    return out
+
+
 class Server:
     """The real control.py in a subprocess with a sandboxed environment."""
 
@@ -130,9 +140,8 @@ class Server:
             return "(no server log)"
 
     def url(self, path):
-        return f"http://127.0.0.1:{self.port}{path}"
+        return f"http://127.0.0.1:{self.port}{path}"  # --- stdlib HTTP helpers with timeout + cookie jar -------------------
 
-    # --- stdlib HTTP helpers with timeout + cookie jar -------------------
     def request(
         self, path, data=None, headers=None, method=None, cookie=None, raw=None, timeout=10, ip=None, csrf=None
     ):
@@ -162,9 +171,9 @@ class Server:
         req = urllib.request.Request(self.url(path), data=body, headers=headers, method=method)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                return r.status, dict(r.headers), r.read()
+                return r.status, _merge_headers(r), r.read()
         except urllib.error.HTTPError as e:
-            return e.code, dict(e.headers), e.read()
+            return e.code, _merge_headers(e), e.read()
 
 
 @pytest.fixture(scope="module")

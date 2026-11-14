@@ -122,14 +122,14 @@ def _key_list():
 def rotate_key(reason="manual", grace=KEY_GRACE, revoke_all=True):
     """Replace the signing key; the old key stays valid for `grace`
     seconds so unrelated sessions survive (#118). Returns the new version."""
-    global SECRET
+    global SECRET, _keys_extra
     with _keys_lock:
         extra = _load_keys()
         version = max((k["v"] for k in extra), default=1) + 1
         extra.append({"v": version, "secret": SECRET, "expires": int(time.time()) + max(0, int(grace))})
         _keys_extra = extra
         _save_keys()
-    SECRET = hashlib.sha256(secrets.token_bytes(32))
+    SECRET = hashlib.sha256(secrets.token_bytes(32)).digest()
     log.log(f"auth: signing key rotated to v{version} ({reason})")
     if revoke_all:
         n = session_revoke_all_global()
@@ -196,7 +196,8 @@ def _verify_token(tok):
             return False
         if not sid:  # legacy token: default admin only, not session-tracked
             return user == AUTH_USER and _legacy_admin_possible()
-        return _session_live(sid, user)
+        ok = _session_live(sid, user)
+        return ok
     except Exception:
         return False
 
@@ -222,19 +223,23 @@ def _sessions_path():
 
 
 def _sessions_load():
+    """The session registry (mtime-cached; a missing/unreadable file
+    degrades to "no sessions", never to "every token is live")."""
     global _sessions
     if _sessions is not None:
         return _sessions
+    ss = {}
     try:
         with open(_sessions_path()) as f:
             raw = json.load(f)
-        _sessions = {
+        ss = {
             sid: rec
             for sid, rec in raw.get("sessions", {}).items()
             if isinstance(rec, dict) and isinstance(rec.get("user"), str) and sid
         }
     except Exception:
-        _sessions = {}
+        ss = {}
+    _sessions = ss
     return _sessions
 
 

@@ -136,9 +136,9 @@ _POST_CAPS = {
     "/api/store/update": CAP_ADMIN,
     "/api/store/cancel": CAP_OPERATE,
     "/api/custom-apps": CAP_OPERATE,
-    "/api/pins/folder": CAP_OPERATE,
-    "/api/pins/assign": CAP_OPERATE,
-    "/api/pins/reorder": CAP_OPERATE,
+    "/api/pins/folder": CAP_VIEW,  # self-service personalization, per-user isolated (#120)
+    "/api/pins/assign": CAP_VIEW,
+    "/api/pins/reorder": CAP_VIEW,
     "/api/launches/clear": CAP_OPERATE,
     "/api/launch": CAP_OPERATE,
     "/api/store/launch": CAP_OPERATE,
@@ -156,7 +156,7 @@ _POST_CAPS = {
     "/api/files/upload/complete": CAP_OPERATE,
     "/api/files/upload/cancel": CAP_OPERATE,
     "/api/files/transfers/": CAP_OPERATE,  # prefix
-    "/api/pins/toggle": CAP_OPERATE,
+    "/api/pins/toggle": CAP_VIEW,
     "/api/backup": CAP_ADMIN,
     # v2.6.0: self-service + admin
     "/api/account/password": CAP_VIEW,
@@ -176,7 +176,7 @@ _POST_CAPS = {
 
 _DELETE_CAPS = {
     "/api/custom-apps": CAP_OPERATE,
-    "/api/pins/folder": CAP_OPERATE,
+    "/api/pins/folder": CAP_VIEW,
     "/api/admin/users": CAP_ADMIN,
     "/api/webauthn/credentials": CAP_VIEW,
 }
@@ -248,11 +248,13 @@ class Handler(http.BaseHandler):
         return CAP_ADMIN  # fail closed
 
     def _require(self, cap):
-        """403 + audit when the role is below `cap` (#112)."""
+        """True when the request was REJECTED (403 sent + audited, #112).
+        `_json` returns None, so the rejection must be signalled by bool."""
         if (getattr(self, "cap", 0) or 0) >= cap:
-            return None
+            return False
         audit.event(audit.SECURITY, "role_denied", handler=self, target=self.path, result="denied")
-        return self._json(403, {"ok": False, "error": "forbidden: your role does not allow this action"})
+        self._json(403, {"ok": False, "error": "forbidden: your role does not allow this action"})
+        return True
 
     # ---- streaming audio (needs custom response, not _json)
     def _stream_audio(self, codec, bitrate=audio.BITRATE_DEFAULT, shared=None):
@@ -539,14 +541,14 @@ class Handler(http.BaseHandler):
             return self._json(200, clipboard.clipboard_get())
         if path == "/api/clipboard/history":  # #70: q= full-text search, tag= filter
             q = parse_qs(url.query)
-            items = clipboard.clip_history(q.get("q", [None])[0], q.get("tag", [None])[0])
-            return self._json(200, {"items": items, "tags": clipboard.clip_tags()})
+            items = clipboard.clip_history(q.get("q", [None])[0], q.get("tag", [None])[0], user=self.user)
+            return self._json(200, {"items": items, "tags": clipboard.clip_tags(user=self.user)})
         if path == "/api/clipboard/sync":  # #72: desktop -> phone push (opt-in)
             since = parse_qs(url.query).get("since", [""])[0][:64]
-            return self._json(200, clipboard.clip_sync(since))
+            return self._json(200, clipboard.clip_sync(since, user=self.user))
         if path == "/api/clipboard/image":  # #71: serve a stored image
-            it = clipboard.clip_item(parse_qs(url.query).get("id", [""])[0])
-            p = clipboard.clip_image_path(it["id"]) if it else None
+            it = clipboard.clip_item(parse_qs(url.query).get("id", [""])[0], user=self.user)
+            p = clipboard.clip_image_path(it["id"], user=self.user) if it else None
             if not p:
                 return self._json(404, {"ok": False, "error": "no such image"})
             self.send_response(200)
@@ -564,7 +566,7 @@ class Handler(http.BaseHandler):
         if path == "/api/custom-apps":  # #63
             return self._json(200, {"ok": True, "apps": apps.list_custom_apps()})
         if path == "/api/pins":  # #64: pins + folders ("Unfiled" virtual)
-            return self._json(200, {"ok": True, **state.pins_snapshot()})
+            return self._json(200, {"ok": True, **state.pins_snapshot(self.user)})
         if path == "/api/audio/test":
             sink = audio._pa("get-default-sink") or "remote_out"
             procs.run_detached(
@@ -621,7 +623,7 @@ class Handler(http.BaseHandler):
                 200,
                 {
                     "ok": True,
-                    "roots": files.roots_public(),
+                    "roots": files.roots_public(user=self.user, cap=self.cap),
                     "root": root.rid,
                     "root_label": root.label,
                     "readonly": root.readonly,
@@ -629,8 +631,16 @@ class Handler(http.BaseHandler):
                     "disk": files.disk_info(root),
                 },
             )
-        if path == "/api/files/roots":  # #84
-            return self._json(200, {"ok": True, "roots": files.roots_public(), "errors": files.ROOT_ERRORS})
+        if path == "/api/files/roots":  # #84 — scoped per user (#120)
+            is_admin = (getattr(self, "cap", 0) or 0) >= CAP_ADMIN
+            return self._json(
+                200,
+                {
+                    "ok": True,
+                    "roots": files.roots_public(user=self.user, cap=self.cap),
+                    **({"errors": files.ROOT_ERRORS} if is_admin else {}),
+                },
+            )
         if path == "/api/files/search":  # #81: bounded recursive search
             q = parse_qs(url.query)
             root = files.resolve_root(q.get("root", [""])[0], user=self.user, cap=self.cap)
@@ -1411,7 +1421,7 @@ class Handler(http.BaseHandler):
         if len(text) > 100_000:
             return self._json(400, {"ok": False, "error": "text too long"})
         if mode == "clipboard":
-            r = clipboard.clipboard_set(text)
+            r = clipboard.clipboard_set(text, user=self.user)
             if not r.get("ok"):
                 return self._json(500, {"ok": False, "error": "could not set the X clipboard"})
             rc, _, err = procs._run(["xdotool", "key", "--clearmodifiers", "ctrl+v"], timeout=10)
