@@ -37,6 +37,29 @@ class BaseHandler(BaseHTTPRequestHandler):
     server_version = "RemoteControl/2.1"
     timeout = config.HTTP_TIMEOUT  # idle keep-alive connections are closed (#28)
 
+    # security headers on every response (#117); CSP configurable via RD_CSP
+    def _security_headers(self):
+        headers = {
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+            "X-Frame-Options": "DENY",
+            "Cross-Origin-Opener-Policy": "same-origin",
+        }
+        if config.CSP:
+            headers["Content-Security-Policy"] = config.CSP
+        if config.HSTS and auth.is_secure_request(self):
+            headers["Strict-Transport-Security"] = f"max-age={config.HSTS}"
+        return headers
+
+    def end_headers(self):
+        # one hook for every response path (_json, send_file, redirects, 101s)
+        try:
+            for k, v in self._security_headers().items():
+                self.send_header(k, v)
+        except Exception:
+            pass
+        super().end_headers()
+
     # ---- plumbing
     def _json(self, code, obj, extra=None):
         data = b"" if getattr(self, "_head_only", False) else json.dumps(obj).encode()
@@ -46,7 +69,11 @@ class BaseHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Request-Id", getattr(self, "rid", "-") or "-")
         for k, v in (extra or {}).items():
-            self.send_header(k, v)
+            if isinstance(v, list):  # repeatable headers (e.g. two Set-Cookies)
+                for item in v:
+                    self.send_header(k, item)
+            else:
+                self.send_header(k, v)
         self.end_headers()
         if data:
             self.wfile.write(data)
@@ -73,7 +100,20 @@ class BaseHandler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(n).decode() or "{}")
 
     def _authed(self):
-        return auth._verify_token(auth._parse_cookie(self, "rd_session"))
+        """Cookie auth + request user context (#112/#111). Populates
+        .token/.sid/.user/.role/.cap; a disabled account is rejected
+        immediately (revocation without waiting for TTL, #111)."""
+        tok = auth._parse_cookie(self, auth.cookie_name())
+        if not auth._verify_token(tok):
+            return False
+        self.token = tok
+        self.sid = auth.sid_of(tok)
+        self.user = auth.user_of(tok)
+        from . import users
+
+        self.role = users.role(self.user) or "viewer"
+        self.cap = users.ROLE_LEVEL.get(self.role, 0)
+        return True
 
     def log_message(self, fmt, *args):
         log.log(f"{auth._client_ip(self)} {fmt % args}")

@@ -1,0 +1,18 @@
+# Grouped dependency updates (#128). The runtime is stdlib-only Python;
+# the interesting surfaces are GitHub Actions and the dev tooling.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    groups:
+      actions:
+        patterns: ["*"]
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /
+    groups:
+      dev-tools:
+        patterns: ["pytest*", "ruff", "coverage*"]
+    schedule:
+      interval: weekly

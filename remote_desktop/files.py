@@ -38,7 +38,8 @@ import time
 import unicodedata
 import zipfile
 
-from . import config, logging as log
+from . import audit as _audit
+from . import config, logging as log, users
 
 FILES_DIR = config.FILES_DIR
 UPLOAD_LIMIT = 2 * 1024**3  # 2 GB per file, unchanged since v2.0.1
@@ -358,14 +359,13 @@ def cleanup_partial_uploads(max_age=24 * 3600):
         return 0
 
 
-def _safe_file_path(name):
-    """Legacy basename-only lookup inside FILES_DIR (kept for the shim's
-    tests): no traversal, no hidden files, realpath contained, and the
-    final component must not be a symlink (#91)."""
+def _safe_file_path_in(dir_path, name):
+    """Basename-only lookup inside `dir_path`: no traversal, no hidden
+    files, realpath contained, final component not a symlink (#91)."""
     name = os.path.basename(name or "")
     if not name or name.startswith(".") or "\x00" in name or len(name) > NAME_MAX:
         return None
-    p = os.path.join(FILES_DIR, name)
+    p = os.path.join(dir_path, name)
     try:
         st = os.lstat(p)  # refuse symlinks outright (#91)
         if stat.S_ISLNK(st.st_mode):
@@ -375,9 +375,15 @@ def _safe_file_path(name):
     except OSError:
         return None
     p = os.path.realpath(p)
-    if os.path.dirname(p) != os.path.realpath(FILES_DIR):
+    if os.path.dirname(p) != os.path.realpath(dir_path):
         return None
     return p
+
+
+def _safe_file_path(name):
+    """Legacy basename-only lookup inside FILES_DIR (kept for the shim's
+    tests); user-scoped callers use _safe_file_path_in with their root."""
+    return _safe_file_path_in(FILES_DIR, name)
 
 
 # ---------------------------------------------------------------- shared roots (#84)
@@ -455,14 +461,36 @@ def setup_roots():
     return ROOT_ERRORS
 
 
-def resolve_root(ident):
-    """Root by id ('r0') or label (case-insensitive); None when unknown."""
+def resolve_root(ident, user=None, cap=0):
+    """Root by id ('r0') or label (case-insensitive); None when unknown.
+    Scoped to the request's user (#120): non-admins can only resolve
+    their own private root — unknown ids answer None (404 upstream) so
+    the existence of other roots never leaks."""
+    allowed = roots_for_user(user, cap)
     if not ident:
-        return ROOTS[0] if ROOTS else None
-    for r in ROOTS:
+        return allowed[0] if allowed else None
+    for r in allowed:
         if r.rid == ident or r.label.lower() == str(ident).lower():
             return r
     return None
+
+
+def roots_for_user(user, cap=0):
+    """Roots visible to one request (#120): admins (and the legacy single
+    admin) see the configured shared roots; every other user sees ONLY
+    their private root. Sharing a root with limited users is an explicit
+    admin configuration (RD_USERS_SHARED_ROOTS=1)."""
+    if user is None or cap >= users.ROLE_LEVEL["admin"] or users.is_default_admin(user):
+        return list(ROOTS)
+    if getattr(config, "USERS_SHARED_ROOTS", False):
+        return [personal_root(user)] + list(ROOTS)
+    return [personal_root(user)]
+
+
+def personal_root(user):
+    """The per-user private files root (#120): <RD_USERS_DIR>/<user>/files."""
+    base = users.user_files_dir(user)
+    return Root("u0", os.path.realpath(base), "Files")
 
 
 def require_writable(root):
@@ -472,12 +500,15 @@ def require_writable(root):
         raise FilesError("root is read-only", 403)
 
 
-def default_root():
-    return ROOTS[0] if ROOTS else None
+def default_root(user=None, cap=0):
+    """The first root visible to this request's user (#120)."""
+    allowed = roots_for_user(user, cap)
+    return allowed[0] if allowed else None
 
 
-def roots_public():
-    return [r.public() for r in ROOTS]
+def roots_public(user=None, cap=0):
+    """Public view of the roots visible to one request (#120)."""
+    return [r.public() for r in roots_for_user(user, cap)]
 
 
 # ---------------------------------------------------------------- listing & operations (#79, #81)
@@ -1151,8 +1182,9 @@ def _audit_clean(value, cap=400):
     return "".join(ch if not unicodedata.category(ch) == "Cc" else "?" for ch in s)
 
 
-def audit(action, handler=None, root=None, path=None, dest=None, size=None, detail=None, result="ok"):
-    """Record ONE audit record per mutating file operation (#92).
+def audit(action, handler=None, root=None, path=None, dest=None, size=None, detail=None, result="ok", user=None):
+    """Record ONE audit record per mutating file operation (#92), now
+    hash-chained like every other audit event (#113).
 
     Never contains file contents — only paths, sizes, identity and result.
     Rotates at AUDIT_MAX keeping AUDIT_KEEP generations; failures to write
@@ -1160,11 +1192,13 @@ def audit(action, handler=None, root=None, path=None, dest=None, size=None, deta
     from . import auth
 
     try:
+        actor = user or getattr(handler, "user", None) or auth.AUTH_USER
         rec = {
             "ts": int(time.time()),
             "iso": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
+            "kind": "files",
             "action": _audit_clean(action, 40),
-            "user": _audit_clean(auth.AUTH_USER, 80),
+            "user": _audit_clean(actor, 80),
             "ip": _audit_clean(auth._client_ip(handler) if handler else "-", 64),
             "rid": _audit_clean(getattr(handler, "rid", "-") if handler else "-", 16),
             "root": _audit_clean(root.label, 60) if root else None,
@@ -1179,34 +1213,15 @@ def audit(action, handler=None, root=None, path=None, dest=None, size=None, deta
                 for k, v in list(detail.items())[:8]
                 if isinstance(v, (str, int, bool))
             }
-        _audit_append(rec)
+        # the chain + rotation logic is shared with the security audit (#113);
+        # this file's own AUDIT_MAX/AUDIT_KEEP (test-overridable) win
+        _audit.append_record(_audit_path(), rec, max_bytes=AUDIT_MAX, keep=AUDIT_KEEP)
     except Exception:
         pass
 
 
-def _audit_append(rec):
-    path = _audit_path()
-    d = os.path.dirname(path)
-    if d:
-        os.makedirs(d, exist_ok=True)
-    try:
-        try:
-            size = os.path.getsize(path)
-        except OSError:
-            size = 0
-        if size + 512 > AUDIT_MAX:  # rotate: .N-1 -> .N ... live -> .1
-            for i in range(AUDIT_KEEP, 0, -1):
-                src = path if i == 1 else f"{path}.{i - 1}"
-                dst = f"{path}.{i}"
-                if os.path.exists(src):
-                    if i == AUDIT_KEEP:
-                        os.remove(src)
-                    else:
-                        os.replace(src, dst)
-        with open(path, "a") as f:
-            f.write(json.dumps(rec) + "\n")
-    except OSError:
-        pass
+def _audit_append(rec):  # pragma: no cover - kept for very old callers
+    _audit.append_record(_audit_path(), rec, max_bytes=AUDIT_MAX, keep=AUDIT_KEEP)
 
 
 def audit_list(limit=200):

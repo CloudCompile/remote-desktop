@@ -120,10 +120,26 @@ start_vnc() {
   GEOM=$(resolve_geometry)
   DPIC=$(resolve_dpi)
   vncserver -kill "$DISP" >/dev/null 2>&1
+  # #122: VNC auth is opt-in via VNC_PASSWORD; the proxy authenticates
+  # with it (fail closed). Plain Xvnc auth uses a vncpasswd-format file.
+  VNC_AUTH_ARGS=""
+  if [ -n "${VNC_PASSWORD:-}" ]; then
+    PWFILE=$(mktemp /tmp/vncpasswd.XXXXXX)
+    chmod 600 "$PWFILE"
+    printf '%s\n' "$VNC_PASSWORD" > "$PWFILE"
+    VNC_AUTH_ARGS="-passwd $PWFILE"
+    log "event=vnc-auth enabled=classic"
+  else
+    log "event=vnc-auth disabled loopback-only=true"
+  fi
   log "event=vnc-start display=$DISP geometry=$GEOM dpi=$DPIC port=$PORT"
   vncserver "$DISP" -geometry "$GEOM" -localhost yes -SecurityTypes None \
     >> "$SESSION_LOG" 2>&1
   rc=$?
+  # #122: warn loudly if the desktop ended up reachable beyond loopback
+  if [ "$rc" -eq 0 ] && netstat -tln 2>/dev/null | grep -q ":$PORT .*0\.0\.0\.0"; then
+    log "event=vnc-exposure WARNING=non-loopback-binding port=$PORT"
+  fi
   log "event=vnc-start-done rc=$rc"
   if [ "$rc" -eq 0 ] && command -v xrandr >/dev/null 2>&1; then
     # apply the configured DPI to the fresh session (report failures, #31)

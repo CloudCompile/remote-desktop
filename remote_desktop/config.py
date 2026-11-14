@@ -15,7 +15,7 @@ never hand-maintained. Secrets (marked secret=True) are redacted there.
 import os
 import re
 
-VERSION = "2.5.0"
+VERSION = "2.6.0"
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB_DIR = os.path.join(BASE_DIR, "web")
@@ -197,6 +197,150 @@ SCHEMA = [
         "Optional KEY=VALUE config file; real environment variables "
         "override it (precedence: defaults < file < environment).",
     ),
+    # ------------------------------------------------------------- v2.6.0 security
+    _Setting(
+        "users_dir",
+        "RD_USERS_DIR",
+        "path",
+        "",
+        "Directory for the user store (users.json) and per-user state: files, "
+        "pins, clipboard history (#111/#120). Empty = <RD_STATE_DIR>/users.",
+    ),
+    _Setting(
+        "users_shared_roots",
+        "RD_USERS_SHARED_ROOTS",
+        "bool",
+        False,
+        "Share the configured file roots with non-admin users as well (#120). "
+        "Private per-user roots always exist; sharing is an explicit admin decision.",
+    ),
+    _Setting(
+        "session_idle",
+        "RD_SESSION_IDLE",
+        "duration",
+        7 * 24 * 3600,
+        "Seconds an authenticated session may stay idle before it is invalidated (#114).",
+    ),
+    _Setting(
+        "cookie_name", "RD_COOKIE_NAME", "str", "rd_session", "Session cookie name, for migrating deployments (#119)."
+    ),
+    _Setting(
+        "cookie_host_prefix",
+        "RD_COOKIE_HOST_PREFIX",
+        "bool",
+        False,
+        "Use the __Host- cookie prefix: name __Host-<RD_COOKIE_NAME>, Path=/, no Domain, Secure forced (#119).",
+    ),
+    _Setting(
+        "cookie_secure",
+        "RD_COOKIE_SECURE",
+        "str",
+        "auto",
+        "Secure attribute on the session cookie: auto (TLS socket or trusted proxy reports https), always, never (#119).",
+    ),
+    _Setting(
+        "allowed_origins",
+        "RD_ALLOWED_ORIGINS",
+        "csv",
+        "",
+        "Extra Origin values (host[:port]) allowed besides the request Host (#116).",
+    ),
+    _Setting(
+        "csrf_enabled",
+        "RD_CSRF",
+        "bool",
+        True,
+        "Require per-session CSRF tokens on state-changing requests (#116). Leave on.",
+    ),
+    _Setting(
+        "csp",
+        "RD_CSP",
+        "str",
+        "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+        "media-src 'self' blob:; connect-src 'self' ws: wss:; font-src 'self'; manifest-src 'self'; "
+        "object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+        "Content-Security-Policy sent on every response; empty disables (#117).",
+    ),
+    _Setting(
+        "hsts",
+        "RD_HSTS",
+        "duration",
+        31_536_000,
+        "Strict-Transport-Security max-age sent on secure responses (0 disables; only meaningful behind TLS) (#117).",
+    ),
+    _Setting(
+        "key_grace",
+        "RD_KEY_GRACE",
+        "duration",
+        300,
+        "Seconds an old session-signing key stays valid after a rotation (#118).",
+    ),
+    _Setting(
+        "login_max",
+        "RD_LOGIN_MAX",
+        "int",
+        5,
+        "Failed logins allowed per IP inside RD_LOGIN_WINDOW before a temporary lockout (#16/#115).",
+    ),
+    _Setting(
+        "login_window",
+        "RD_LOGIN_WINDOW",
+        "duration",
+        600,
+        "Sliding window in seconds for the login rate limit (#115).",
+    ),
+    _Setting(
+        "audit_max",
+        "RD_AUDIT_MAX",
+        "bytes",
+        512 * 1024,
+        "Audit log rotation threshold in bytes (AUDIT_KEEP generations are kept) (#113).",
+    ),
+    _Setting(
+        "webauthn",
+        "RD_WEBAUTHN",
+        "bool",
+        False,
+        "Opt-in passkey/WebAuthn support; requires the optional 'webauthn' package (#110).",
+    ),
+    _Setting(
+        "rp_id",
+        "RD_RP_ID",
+        "str",
+        "",
+        "WebAuthn Relying Party ID (the registerable domain browsers see). Empty = request Host without port (#110).",
+    ),
+    _Setting(
+        "notify_webhook",
+        "RD_NOTIFY_WEBHOOK",
+        "str",
+        "",
+        "Optional webhook URL receiving login notifications as JSON POSTs (#123).",
+    ),
+    _Setting(
+        "notify_enabled",
+        "RD_NOTIFY",
+        "bool",
+        True,
+        "Login notifications (new-device alerts in the UI + optional webhook) (#123).",
+    ),
+    _Setting(
+        "vnc_password",
+        "VNC_PASSWORD",
+        "str",
+        "",
+        "Optional VNC password for the upstream connection (classic VNC auth, #122). "
+        "Empty = none (localhost default). Setting it makes the proxy authenticate or fail closed.",
+        secret=True,
+    ),
+    _Setting(
+        "totp_required",
+        "RD_2FA_REQUIRED",
+        "bool",
+        False,
+        "When true, accounts without an enrolled second factor cannot log in (#109). "
+        "Enroll the admin first, then switch on.",
+    ),
 ]
 
 _LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
@@ -346,6 +490,27 @@ def validate(values=None):
     )
     fd = v["files_dir"]
     need(not os.path.exists(fd) or os.path.isdir(fd), f"RD_FILES_DIR: {fd!r} exists and is not a directory")
+    # ---- v2.6.0 security settings
+    need(
+        v["cookie_secure"] in ("auto", "always", "never"),
+        f"RD_COOKIE_SECURE: must be auto|always|never, got {v['cookie_secure']!r}",
+    )
+    need(
+        bool(re.match(r"^[a-zA-Z0-9_-]{1,64}$", v["cookie_name"])),
+        f"RD_COOKIE_NAME: must be 1-64 cookie-safe characters, got {v['cookie_name']!r}",
+    )
+    need(
+        300 <= v["session_idle"] <= 30 * 86_400,
+        f"RD_SESSION_IDLE: seconds must be 300-2592000, got {v['session_idle']}",
+    )
+    need(1 <= v["login_max"] <= 100, f"RD_LOGIN_MAX: must be 1-100, got {v['login_max']}")
+    need(60 <= v["login_window"] <= 86_400, f"RD_LOGIN_WINDOW: seconds must be 60-86400, got {v['login_window']}")
+    need(
+        64 * 1024 <= v["audit_max"] <= 16 * 1024 * 1024,
+        f"RD_AUDIT_MAX: bytes must be 64KiB-16MiB, got {v['audit_max']}",
+    )
+    need(0 <= v["hsts"] <= 31_536_000, f"RD_HSTS: max-age must be 0-31536000, got {v['hsts']}")
+    need(0 <= v["key_grace"] <= 86_400, f"RD_KEY_GRACE: seconds must be 0-86400, got {v['key_grace']}")
     return errs
 
 
@@ -354,6 +519,30 @@ def check(values=None):
     errs = validate(values)
     if errs:
         raise ConfigError("invalid configuration:\n  - " + "\n  - ".join(errs))
+
+
+_LOOPBACK = ("127.0.0.1", "localhost", "::1", "")
+
+
+def _is_loopback(host):
+    return host in _LOOPBACK or host.startswith("127.")
+
+
+def exposure_warnings():
+    """Non-fatal security warnings surfaced at startup (#122): a VNC or
+    control server exposed beyond loopback must be a deliberate choice."""
+    warns = []
+    if not _is_loopback(VNC_HOST):
+        warns.append(
+            f"VNC_HOST {VNC_HOST!r} is not loopback: the desktop's VNC server is reachable beyond localhost. "
+            "Set a VNC password (VNC_PASSWORD) and keep a firewall rule in front of it."
+        )
+    if not _is_loopback(BIND_HOST):
+        warns.append(
+            f"RD_BIND {BIND_HOST!r} is not loopback: the control server is directly reachable. "
+            "Prefer the default and put an HTTPS proxy (tailscale funnel/caddy/nginx) in front."
+        )
+    return warns
 
 
 def ensure_dirs(values):
@@ -411,8 +600,28 @@ WS_HIGH_WATER = VALUES["ws_high_water"]
 VNC_RETRIES = VALUES["vnc_retries"]
 VNC_BACKOFF = VALUES["vnc_backoff"]
 STATE_DIR = VALUES["state_dir"]
+USERS_DIR = VALUES["users_dir"] or os.path.join(VALUES["state_dir"], "users")
 READY_CACHE = VALUES["ready_cache"]
 CONFIG_FILE = VALUES["config_file"]
+SESSION_IDLE = int(VALUES["session_idle"])
+USERS_SHARED_ROOTS = VALUES["users_shared_roots"]
+COOKIE_NAME = VALUES["cookie_name"]
+COOKIE_HOST_PREFIX = VALUES["cookie_host_prefix"]
+COOKIE_SECURE = VALUES["cookie_secure"]
+ALLOWED_ORIGINS = VALUES["allowed_origins"]
+CSRF_ENABLED = VALUES["csrf_enabled"]
+CSP = VALUES["csp"]
+HSTS = int(VALUES["hsts"])
+KEY_GRACE = int(VALUES["key_grace"])
+LOGIN_MAX_ATTEMPTS = VALUES["login_max"]
+LOGIN_WINDOW = int(VALUES["login_window"])
+AUDIT_MAX = VALUES["audit_max"]
+WEBAUTHN_ENABLED = VALUES["webauthn"]
+RP_ID = VALUES["rp_id"]
+NOTIFY_WEBHOOK = VALUES["notify_webhook"]
+NOTIFY_ENABLED = VALUES["notify_enabled"]
+VNC_PASSWORD = VALUES["vnc_password"]
+TOTP_REQUIRED = VALUES["totp_required"]
 
 # Child-process environment (X11 + PulseAudio) used by every spawned tool.
 XAUTHORITY = os.environ.get("XAUTHORITY", os.path.join(HOME, ".Xauthority"))

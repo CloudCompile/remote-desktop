@@ -41,6 +41,16 @@ def _free_port():
     return port
 
 
+def _merge_headers(resp):
+    """Duplicate headers (Set-Cookie!) must survive: join with ', ' per
+    RFC 9110. dict(r.headers) silently kept only the LAST one, which made
+    every login-derived cookie test read the wrong cookie (#125)."""
+    out = {}
+    for k, v in resp.headers.items():
+        out[k] = f"{out[k]}, {v}" if k in out else v
+    return out
+
+
 class Server:
     """The real control.py in a subprocess with a sandboxed environment."""
 
@@ -74,6 +84,16 @@ class Server:
             }
         )
         self.proc = None
+        self._csrf_cache = {}  # cookie -> token (#116: the test client sends it like the browser)
+
+    def _csrf(self, cookie):
+        tok = self._csrf_cache.get(cookie)
+        if not tok:
+            code, _, body = self.request("/api/csrf", cookie=cookie, csrf=False)
+            if code == 200:
+                tok = json.loads(body).get("token") or ""
+                self._csrf_cache[cookie] = tok
+        return tok
 
     def start(self):
         # use the coverage entry wrapper when a coverage run is detected,
@@ -120,13 +140,29 @@ class Server:
             return "(no server log)"
 
     def url(self, path):
-        return f"http://127.0.0.1:{self.port}{path}"
+        return f"http://127.0.0.1:{self.port}{path}"  # --- stdlib HTTP helpers with timeout + cookie jar -------------------
 
-    # --- stdlib HTTP helpers with timeout + cookie jar -------------------
-    def request(self, path, data=None, headers=None, method=None, cookie=None, raw=None, timeout=10, ip=None):
+    def request(
+        self, path, data=None, headers=None, method=None, cookie=None, raw=None, timeout=10, ip=None, csrf=None
+    ):
+        """HTTP request. csrf=False suppresses the X-CSRF-Token the way a
+        browser client normally sends it (#116) — used by the tests that
+        assert the token is actually enforced."""
         headers = dict(headers or {})
         if cookie:
             headers["Cookie"] = cookie
+        m = method or ("POST" if (data is not None or raw is not None) else "GET")
+        if (
+            cookie
+            and csrf is not False
+            and m in ("POST", "DELETE")
+            and "X-CSRF-Token" not in headers
+            and not path.startswith("/api/login")
+            and path not in ("/api/logout", "/share")
+        ):
+            tok = self._csrf(cookie)
+            if tok:
+                headers["X-CSRF-Token"] = tok
         if ip:
             headers["X-Forwarded-For"] = ip
         body = raw if raw is not None else (json.dumps(data).encode() if data is not None else None)
@@ -135,9 +171,9 @@ class Server:
         req = urllib.request.Request(self.url(path), data=body, headers=headers, method=method)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                return r.status, dict(r.headers), r.read()
+                return r.status, _merge_headers(r), r.read()
         except urllib.error.HTTPError as e:
-            return e.code, dict(e.headers), e.read()
+            return e.code, _merge_headers(e), e.read()
 
 
 @pytest.fixture(scope="module")
@@ -311,11 +347,16 @@ def test_clipboard_requires_auth(server):
 def test_files_upload_list_download_delete(server):
     _, cookie = _login(server, ip="192.0.2.13")
     payload = b"integration-file-content-\x00\x01\x02"
+    csrf = server._csrf(cookie) or ""
     req = urllib.request.Request(
         server.url(f"/api/upload?name=hello.bin"),
         data=payload,
         method="POST",
-        headers={"Cookie": cookie, "Content-Type": "application/octet-stream"},
+        headers={
+            "Cookie": cookie,
+            "Content-Type": "application/octet-stream",
+            "X-CSRF-Token": csrf,  # #116: state-changing requests carry the token
+        },
     )
     with urllib.request.urlopen(req, timeout=10) as r:
         up = json.loads(r.read())
@@ -450,10 +491,21 @@ def _read_ws_message(sock, timeout=10):
 
 def test_websocket_upgrade_fails_gracefully_when_vnc_absent(server):
     # VNC points at an empty port for the module server: upgrade gets 502
-    s, head, _ = _ws_connect(server.port, headers=_ws_headers())
+    # (after authenticating — the websocket is an endpoint like any other, #112)
+    _, cookie = _login(server, ip="192.0.2.90")
+    s, head, _ = _ws_connect(server.port, headers={**_ws_headers(), "Cookie": cookie})
     try:
         assert b"502" in head.split(b"\r\n")[0]
         assert b"application/json" in head
+    finally:
+        s.close()
+
+
+def test_websocket_upgrade_requires_auth(server):
+    # #125: no cookie -> 401 before any upstream connection is made
+    s, head, _ = _ws_connect(server.port, headers=_ws_headers())
+    try:
+        assert b"401" in head.split(b"\r\n")[0]
     finally:
         s.close()
 
@@ -515,7 +567,7 @@ def _proxy_against(server, vnc_port, reconnect):
         [sys.executable, os.path.join(REPO, "control.py")],
         env=env,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=open(os.path.join(tmp_path, "err.log"), "ab"),
     )
     try:
         deadline = time.time() + 15
@@ -526,9 +578,36 @@ def _proxy_against(server, vnc_port, reconnect):
                     up = r.status == 200
             except Exception:
                 time.sleep(0.15)
-        assert up, "echo server did not come up"
+        assert up, (
+            "echo server did not come up; log:\n"
+            + (
+                open(os.path.join(tmp_path, "server.log")).read()[-2000:]
+                if os.path.exists(os.path.join(tmp_path, "server.log"))
+                else "(none)"
+            )
+            + "\nerr:\n"
+            + (
+                open(os.path.join(tmp_path, "err.log")).read()[-2000:]
+                if os.path.exists(os.path.join(tmp_path, "err.log"))
+                else "(none)"
+            )
+        )
 
-        s, head, _ = _ws_connect(port)
+        # the websocket proxy requires an authenticated session (#112/#125)
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/login",
+            data=json.dumps({"username": "admin", "password": TEST_PASSWORD}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                cookie = r.headers.get("Set-Cookie", "").split(";", 1)[0]
+        except urllib.error.HTTPError as e:
+            cookie = e.headers.get("Set-Cookie", "").split(";", 1)[0]
+        assert cookie.startswith("rd_session="), "echo-server login failed"
+
+        s, head, _ = _ws_connect(port, headers={**_ws_headers(), "Cookie": cookie})
         try:
             assert b"101" in head.split(b"\r\n")[0], head
             payload = bytes(range(256)) * 4  # 1 KiB binary
