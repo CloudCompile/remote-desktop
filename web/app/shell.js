@@ -472,7 +472,23 @@ async function pingHealth(){
     const r = await fetch('/api/health?ping=' + Date.now(), { cache: 'no-store' });
     if (r.status === 401) { location.href = '/login'; return; }
     rttMs = Math.round(performance.now() - t0);
-    try { serverVersion = (await r.json()).version || serverVersion; } catch (_) {}
+    let srvV = '';
+    try { srvV = (await r.json()).version || ''; serverVersion = srvV || serverVersion; } catch (_) {}
+    // stale-client auto-update (#128 follow-up): compare the served app
+    // version against the CONTROLLING service worker's registered version;
+    // one automatic reload per deployment, guarded against loops
+    try {
+      const metaV = (document.querySelector('meta[name="app-version"]') || {}).content || '';
+      const ctrl = navigator.serviceWorker.controller;
+      const ctrlV = (ctrl?.scriptURL.match(/v=([^&]+)/) || [])[1] || '';
+      // first visit: no controller yet = fresh storage, nothing stale
+      if (ctrl && metaV && metaV !== ctrlV && !sessionStorage.getItem('rdReloaded')) {
+        sessionStorage.setItem('rdReloaded', '1');
+        status(`Updating client to v${srvV || metaV}…`);
+        setTimeout(() => location.reload(), 600);
+        return;
+      }
+    } catch (_) {}
     setQuality(rttMs < 300 ? 'good' : rttMs < 1000 ? 'fair' : 'poor');
   } catch (_) {
     rttMs = null;
@@ -3267,7 +3283,7 @@ setInterval(async () => {
 if ('serviceWorker' in navigator &&
     (window.isSecureContext || ['localhost', '127.0.0.1'].includes(location.hostname))) {
   addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').then(reg => {
+    navigator.serviceWorker.register('/sw.js?v=2.6.1').then(reg => {
       if (reg.waiting && navigator.serviceWorker.controller)
         status('App update ready — reload to apply');
       reg.addEventListener('updatefound', () => {
