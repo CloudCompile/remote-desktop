@@ -204,11 +204,16 @@ async def _create_peer_answer(m, sdp, type_, user):
     global _last_error
     if len(_peers) >= _MAX_PEERS:
         raise RuntimeError(f"too many WebRTC peers (cap {_MAX_PEERS})")
-    pc = m["RTCPeerConnection"](
-        m["RTCConfiguration"](iceServers=[m["RTCIceServer"](urls=config.WEBRTC_STUN.split(","))])
-        if config.WEBRTC_STUN
-        else None
-    )
+    ice_cfg = None
+    servers = ice_servers()
+    if servers:
+        ice_cfg = m["RTCConfiguration"](iceServers=[
+            m["RTCIceServer"](urls=s["urls"] if isinstance(s["urls"], list) else [s["urls"]],
+                              username=s.get("username") or None,
+                              credential=s.get("credential") or None)
+            for s in servers
+        ])
+    pc = m["RTCPeerConnection"](ice_cfg)
     _peers.add(pc)
 
     try:
@@ -270,6 +275,24 @@ async def _create_peer_answer(m, sdp, type_, user):
         raise
     audit.event(audit.SECURITY, "webrtc_offer", user=user, result="ok", detail={"peers": len(_peers)})
     return result
+
+
+def ice_servers():
+    """ICE server list for BOTH peers (#137): TURN first when configured
+    (it is the only path that survives a blocked-UDP network), then the
+    STUN servers. The browser gets this through /api/webrtc/config so
+    the TURN credentials never live in the JS bundle."""
+    servers = []
+    if config.WEBRTC_TURN_URLS:
+        urls = [u.strip() for u in config.WEBRTC_TURN_URLS.split(",") if u.strip()]
+        if urls:
+            servers.append({"urls": urls, "username": config.WEBRTC_TURN_USER,
+                            "credential": config.WEBRTC_TURN_PASS})
+    if config.WEBRTC_STUN:
+        stun = [u.strip() for u in config.WEBRTC_STUN.split(",") if u.strip()]
+        if stun:
+            servers.append({"urls": stun})
+    return servers
 
 
 def handle_offer(sdp: str, type_: str, user: str):

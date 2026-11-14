@@ -89,6 +89,7 @@ _GET_CAPS = {
     "/api/audio.opus": CAP_VIEW,
     "/api/stats": CAP_VIEW,
     "/api/webrtc/status": CAP_VIEW,
+    "/api/webrtc/config": CAP_VIEW,
     "/api/files": CAP_VIEW,
     "/api/files/roots": CAP_VIEW,
     "/api/files/search": CAP_VIEW,
@@ -381,6 +382,8 @@ class Handler(http.BaseHandler):
             )
         if path == "/api/webrtc/status":  # #137: inspect active media transport
             return self._json(200, {"ok": True, **webrtc.status()})
+        if path == "/api/webrtc/config":  # #137: browser ICE servers (TURN creds stay server-side)
+            return self._json(200, {"ok": True, "iceServers": webrtc.ice_servers()})
         if path == "/api/csrf":  # #116: per-session CSRF token (+ cookie mirror)
             tok = auth.csrf_token(getattr(self, "sid", "") or "")
             return self._json(200, {"ok": True, "token": tok}, extra={"Set-Cookie": auth.csrf_cookie_header(tok)})

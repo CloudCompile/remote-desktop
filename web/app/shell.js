@@ -655,12 +655,17 @@ async function rtcStart(){
   if (rtcPc) return;
   $('rtcNote').textContent = 'starting…';
   try {
-    rtcPc = new RTCPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-      ],
-    });
+    // ICE servers (TURN included) come from the server so the relay
+    // credentials never ship inside the JS bundle (#137)
+    let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+    try {
+      const cr = await fetch('/api/webrtc/config');
+      if (cr.ok) {
+        const cj = await cr.json();
+        if (cj.iceServers && cj.iceServers.length) iceServers = cj.iceServers;
+      }
+    } catch (_) {}
+    rtcPc = new RTCPeerConnection({ iceServers });
     rtcPc.addTransceiver('audio', { direction: 'recvonly' });
     rtcPc.addTransceiver('video', { direction: 'recvonly' });
     rtcPc.ontrack = e => {

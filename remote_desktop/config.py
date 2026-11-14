@@ -322,6 +322,30 @@ SCHEMA = [
         "candidates only (loopback/tailnet deployments).",
     ),
     _Setting(
+        "webrtc_turn_urls",
+        "RD_WEBRTC_TURN_URLS",
+        "str",
+        "",
+        "Comma-separated TURN URLs (turn:/turns: with ?transport=tcp) used by both "
+        "the server peer and the browser; needed when inbound UDP is blocked (#137).",
+    ),
+    _Setting(
+        "webrtc_turn_user",
+        "RD_WEBRTC_TURN_USER",
+        "str",
+        "",
+        "TURN credential username (Metered/OpenRelay credential).",
+        secret=True,
+    ),
+    _Setting(
+        "webrtc_turn_pass",
+        "RD_WEBRTC_TURN_PASS",
+        "str",
+        "",
+        "TURN credential password.",
+        secret=True,
+    ),
+    _Setting(
         "rp_id",
         "RD_RP_ID",
         "str",
@@ -642,6 +666,9 @@ VNC_PASSWORD = VALUES["vnc_password"]
 TOTP_REQUIRED = VALUES["totp_required"]
 WEBRTC = VALUES["webrtc"]
 WEBRTC_STUN = VALUES["webrtc_stun"]
+WEBRTC_TURN_URLS = VALUES["webrtc_turn_urls"]
+WEBRTC_TURN_USER = VALUES["webrtc_turn_user"]
+WEBRTC_TURN_PASS = VALUES["webrtc_turn_pass"]
 
 # Child-process environment (X11 + PulseAudio) used by every spawned tool.
 XAUTHORITY = os.environ.get("XAUTHORITY", os.path.join(HOME, ".Xauthority"))
