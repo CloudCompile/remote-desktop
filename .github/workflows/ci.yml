@@ -41,6 +41,20 @@ jobs:
               print("inline <script> found (CSP #117 forbids it):", bad)
               raise SystemExit(1)
           PY
+          # the service-worker cache version must track the release (#128):
+          # a stale version serves old JS to clients forever
+          python3 - <<'PY'
+          import re, pathlib
+          sw = pathlib.Path("web/sw.js").read_text()
+          srv = pathlib.Path("remote_desktop/config.py").read_text()
+          sw_v = re.search(r"const VERSION = '([^']+)'", sw).group(1)
+          srv_v = re.search(r'VERSION = "([^"]+)"', srv).group(1)
+          if sw_v != srv_v:
+              print(f"web/sw.js cache version {sw_v!r} != server version {srv_v!r} — "
+                    "bump const VERSION in web/sw.js on every release")
+              raise SystemExit(1)
+          print(f"sw cache version matches server: {sw_v}")
+          PY
 
       - name: Docs links
         run: python3 scripts/check-links.py
