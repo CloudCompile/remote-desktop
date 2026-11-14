@@ -295,6 +295,10 @@
 <div id="probe"></div>
 <div id="app">
   <div id="screen"></div>
+  <!-- #137: WebRTC video track rendered over the noVNC canvas; the
+       websocket underneath keeps carrying input (hybrid transport) -->
+  <video id="rtcVideo" autoplay playsinline muted hidden
+         style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:5"></video>
   <div id="status"></div>
 
   <button id="barHandle" class="hidden" type="button" title="Show controls" aria-label="Show controls">
@@ -549,6 +553,13 @@
       <button id="geoReset" style="flex:0 0 auto" data-i18n="more.geoReset">Reset</button>
     </div>
     <div class="row"><label id="geoNote"></label></div>
+    <hr>
+    <h3 data-i18n="more.webrtcH">Video transport (beta)</h3>
+    <div class="row">
+      <div class="check"><input type="checkbox" id="rtcChk" aria-label="Decode video and audio over WebRTC"></div>
+      <label for="rtcChk" data-i18n="more.webrtcUse">WebRTC video &amp; audio (hardware decode)</label>
+    </div>
+    <div class="row"><label id="rtcNote" style="color:var(--muted)"></label></div>
     <hr>
     <h3 data-i18n="more.appearance">Appearance</h3>
     <div class="row">

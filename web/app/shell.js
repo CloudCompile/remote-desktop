@@ -626,12 +626,86 @@ $('bAudio').addEventListener('click', () => {
   meterStart();       // #103
 });
 $('bFiles').addEventListener('click', () => { openSheet($('shFiles')); loadFiles(); });
+/* ------------------------------------------------------------------ *
+ *  WebRTC transport (#137, opt-in): framebuffer video + desktop audio
+ *  as real media tracks — the browser's GPU decodes them. The noVNC
+ *  websocket stays connected and keeps carrying input; its canvas is
+ *  hidden while the video track is live.                               *
+ * ------------------------------------------------------------------ */
+let rtcPc = null;
+const rtcVideo = $('rtcVideo');
+
+async function rtcStart(){
+  if (rtcPc) return;
+  $('rtcNote').textContent = 'starting…';
+  try {
+    rtcPc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    rtcPc.addTransceiver('audio', { direction: 'recvonly' });
+    rtcPc.addTransceiver('video', { direction: 'recvonly' });
+    rtcPc.ontrack = e => {
+      if (e.track.kind === 'video') {
+        rtcVideo.srcObject = e.streams[0];
+        rtcVideo.hidden = false;
+      } else if (e.track.kind === 'audio') {
+        const a = new Audio();
+        a.srcObject = e.streams[0];
+        a.autoplay = true;
+        a.dataset.rtc = '1';
+        document.body.append(a);
+      }
+    };
+    rtcPc.onconnectionstatechange = () => {
+      if (['failed', 'closed', 'disconnected'].includes(rtcPc.connectionState)) {
+        status('WebRTC stream lost — falling back to the canvas', true);
+        rtcStop();
+      }
+    };
+    const offer = await rtcPc.createOffer();
+    await rtcPc.setLocalDescription(offer);
+    const r = await fetch('/api/webrtc/offer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sdp: rtcPc.localDescription.sdp, type: rtcPc.localDescription.type }),
+    });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'signalling failed');
+    await rtcPc.setRemoteDescription({ type: j.type, sdp: j.sdp });
+    $('rtcChk').checked = true;
+    $('rtcNote').textContent = 'WebRTC active — hardware decode';
+  } catch (e) {
+    status('WebRTC: ' + (e.message || e), true);
+    $('rtcNote').textContent = 'unavailable: ' + (e.message || e);
+    rtcStop();
+  }
+}
+
+function rtcStop(){
+  if (rtcPc) { try { rtcPc.close(); } catch(_) {} rtcPc = null; }
+  rtcVideo.srcObject = null;
+  rtcVideo.hidden = true;
+  document.querySelectorAll('audio[data-rtc]').forEach(a => a.remove());
+  $('rtcChk').checked = false;
+  const note = $('rtcNote');
+  if (note) note.textContent = '';
+}
+
+function rtcRefreshNote(){
+  $('rtcChk').checked = store.get('rtc', '') === '1';
+}
+
+$('rtcChk').addEventListener('change', e => {
+  if (e.target.checked) { store.set('rtc', '1'); rtcStart(); }
+  else { store.del('rtc'); rtcStop(); }
+});
+
 $('bMore').addEventListener('click', () => {
   openSheet($('shMore'));
   loadClipHistory();
   loadStats();
   updateConnBox();
   paintBarCust();
+  rtcRefreshNote();
+
   // geometry state refresh while open (#76)
   fetch('/api/geometry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
     .then(r => r.json())
