@@ -10,6 +10,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/), semver.
 - v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones, release themes
   and linked issues.
 
+## [2.6.2] — 2026-11-14
+
+### Fixed
+
+- WebRTC now waits for ICE candidate gathering before signaling; the
+  HTTP offer/answer handler owns all aiortc peer operations on the media
+  asyncio loop, avoiding cross-thread ICE/DTLS corruption (#137).
+- Added authenticated `/api/webrtc/status` to report feature availability
+  and active peer count; the client displays ICE and peer states instead
+  of claiming hardware decode immediately after SDP acceptance.
+
 ## [2.6.1] — 2026-11-14
 
 ### Fixed

@@ -12,7 +12,7 @@
  * cache-first: they only change on a release, and the cache version below
  * is bumped with it.
  */
-const VERSION = 'v2.6.1';
+const VERSION = 'v2.6.2';
 const CACHE = 'rd-shell-' + VERSION;
 
 // fetched up front so a cold offline start has a shell to show
