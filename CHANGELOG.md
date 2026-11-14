@@ -10,6 +10,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/), semver.
 - v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones, release themes
   and linked issues.
 
+## [2.6.1] — 2026-11-14
+
+### Fixed
+
+- PCM audio fallback called `/api/audio/raw`; the route is
+  `/api/audio.raw` — Firefox (and every non-MSE browser) had no audio
+  at all (#100).
+- The #121 confirm dialog could never hide: its inline `display:flex`
+  overrode the `hidden` attribute, so an empty dialog covered the app
+  from page load and Cancel/Confirm appeared dead. Styling moved to the
+  stylesheet with a `#confirmScrim[hidden]` enforcement.
+- The origin check rejected every mutation from behind a reverse proxy
+  (Funnel/Caddy): the browser's Origin did not match the proxy-target
+  Host. X-Forwarded-Host from trusted proxies is now honoured, and
+  deployments can allow-list origins with RD_ALLOWED_ORIGINS (#116).
+- Duplicate `fmtWhen` declaration broke the JS syntax check under
+  Node 20.
+- The service-worker cache version now tracks the release via a CI
+  check — it had been frozen at v2.2.0, serving stale client code to
+  every browser since (#128 follow-up).
+
 ## [2.6.0] — 2026-11-14
 
 ### Added

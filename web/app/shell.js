@@ -2642,7 +2642,7 @@ async function startPCM(){
   try {
     actx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: SR });
     await actx.resume();
-    const resp = await fetch('/api/audio/raw', { cache: 'no-store' });
+    const resp = await fetch('/api/audio.raw', { cache: 'no-store' });
     if (!resp.ok || !resp.body) throw new Error('HTTP ' + resp.status);
     reader = resp.body.getReader();
     carry = new Uint8Array(0);
