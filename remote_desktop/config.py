@@ -344,7 +344,8 @@ SCHEMA = [
     ),
     _Setting(
         "vnc_password",
-        "VNC_PASSWORD",        "str",
+        "VNC_PASSWORD",
+        "str",
         "",
         "Optional VNC password for the upstream connection (classic VNC auth, #122). "
         "Empty = none (localhost default). Setting it makes the proxy authenticate or fail closed.",
