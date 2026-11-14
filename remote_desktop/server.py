@@ -116,6 +116,7 @@ _POST_CAPS = {
     "/share": CAP_VIEW,  # OS share-target form POST; origin-checked (#116)
     "/api/fit": CAP_OPERATE,
     "/api/webrtc/offer": CAP_VIEW,  # watching is view-level (#137)
+    "/api/webrtc/ice-state": CAP_VIEW,
     "/api/window/action": CAP_OPERATE,
     "/api/geometry": CAP_OPERATE,
     "/api/settings": CAP_OPERATE,
@@ -758,6 +759,15 @@ class Handler(http.BaseHandler):
                 except Exception as e:
                     return self._json(503, {"ok": False, "error": str(e)})
                 return self._json(200, {"ok": True, **answer})
+            if path == "/api/webrtc/ice-state":  # #137: browser ICE diagnostics
+                d = self._body()
+                ice = str(d.get("ice", ""))[:24]
+                peer = str(d.get("peer", ""))[:24]
+                if ice not in ("new", "checking", "connected", "completed", "failed", "disconnected", "closed"):
+                    return self._json(400, {"ok": False, "error": "invalid ICE state"})
+                webrtc.update_ice_state(ice, peer)
+                log.log(f"webrtc browser state user={self.user} ice={ice} peer={peer}")
+                return self._json(200, {"ok": True})
             if path == "/api/fit":
                 return self._json(200, {"ok": True, "windows": windows.fit_windows()})
             if path == "/api/window/action":  # #60/#61: close|minimize|maximize|restore|move|resize|layout|focus

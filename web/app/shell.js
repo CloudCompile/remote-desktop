@@ -673,6 +673,7 @@ async function rtcStart(){
     rtcPc.onconnectionstatechange = () => {
       const state = rtcPc?.connectionState || 'closed';
       $('rtcNote').textContent = `WebRTC: ${state}`;
+      fetch('/api/webrtc/ice-state', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ice:rtcPc?.iceConnectionState||'closed',peer:state})}).catch(()=>{});
       if (state === 'connected') status('WebRTC connected — hardware video decode active');
       if (['failed', 'closed', 'disconnected'].includes(rtcPc.connectionState)) {
         status('WebRTC connection failed — falling back to the canvas', true);
@@ -681,7 +682,11 @@ async function rtcStart(){
       }
     };
     rtcPc.oniceconnectionstatechange = () => {
-      if (rtcPc) $('rtcNote').textContent = `ICE: ${rtcPc.iceConnectionState}`;
+      if (rtcPc) {
+        const ice=rtcPc.iceConnectionState;
+        $('rtcNote').textContent = `ICE: ${ice}`;
+        fetch('/api/webrtc/ice-state', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ice,peer:rtcPc.connectionState})}).catch(()=>{});
+      }
     };
     const offer = await rtcPc.createOffer();
     await rtcPc.setLocalDescription(offer);
