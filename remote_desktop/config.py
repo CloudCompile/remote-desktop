@@ -304,6 +304,24 @@ SCHEMA = [
         "Opt-in passkey/WebAuthn support; requires the optional 'webauthn' package (#110).",
     ),
     _Setting(
+        "webrtc",
+        "RD_WEBRTC",
+        "bool",
+        False,
+        "Opt-in WebRTC transport: the framebuffer + audio as real media tracks "
+        "decoded by the browser's hardware pipeline (#137). Requires the optional "
+        "'aiortc' package; the noVNC websocket keeps carrying input.",
+    ),
+    _Setting(
+        "webrtc_stun",
+        "RD_WEBRTC_STUN",
+        "str",
+        "stun:stun.l.google.com:19302",
+        "Comma-separated STUN servers for the server-side ICE gathering — the "
+        "browser needs the host's public reflexive candidate. Empty = host "
+        "candidates only (loopback/tailnet deployments).",
+    ),
+    _Setting(
         "rp_id",
         "RD_RP_ID",
         "str",
@@ -622,6 +640,8 @@ NOTIFY_WEBHOOK = VALUES["notify_webhook"]
 NOTIFY_ENABLED = VALUES["notify_enabled"]
 VNC_PASSWORD = VALUES["vnc_password"]
 TOTP_REQUIRED = VALUES["totp_required"]
+WEBRTC = VALUES["webrtc"]
+WEBRTC_STUN = VALUES["webrtc_stun"]
 
 # Child-process environment (X11 + PulseAudio) used by every spawned tool.
 XAUTHORITY = os.environ.get("XAUTHORITY", os.path.join(HOME, ".Xauthority"))

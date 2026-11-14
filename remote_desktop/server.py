@@ -41,6 +41,7 @@ from . import (
     users,
     vncproxy,
     webauthn,
+    webrtc,
     windows,
 )
 
@@ -113,6 +114,7 @@ _GET_CAPS = {
 _POST_CAPS = {
     "/share": CAP_VIEW,  # OS share-target form POST; origin-checked (#116)
     "/api/fit": CAP_OPERATE,
+    "/api/webrtc/offer": CAP_VIEW,  # watching is view-level (#137)
     "/api/window/action": CAP_OPERATE,
     "/api/geometry": CAP_OPERATE,
     "/api/settings": CAP_OPERATE,
@@ -740,6 +742,19 @@ class Handler(http.BaseHandler):
         try:
             if path == "/share":  # #87: PWA share-target uploads (multipart)
                 return self._share_upload()
+            if path == "/api/webrtc/offer":  # #137: WebRTC signalling
+                ok, reason = webrtc.available()
+                if not ok:
+                    return self._json(501, {"ok": False, "error": "WebRTC not enabled: " + reason})
+                d = self._body()
+                sdp, type_ = str(d.get("sdp", "")), str(d.get("type", "offer"))
+                if not sdp or "v=0" not in sdp:
+                    return self._json(400, {"ok": False, "error": "malformed SDP"})
+                try:
+                    answer = webrtc.handle_offer(sdp, type_, self.user)
+                except Exception as e:
+                    return self._json(503, {"ok": False, "error": str(e)})
+                return self._json(200, {"ok": True, **answer})
             if path == "/api/fit":
                 return self._json(200, {"ok": True, "windows": windows.fit_windows()})
             if path == "/api/window/action":  # #60/#61: close|minimize|maximize|restore|move|resize|layout|focus
