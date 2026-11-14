@@ -671,13 +671,37 @@ async function rtcStart(){
       }
     };
     rtcPc.onconnectionstatechange = () => {
+      const state = rtcPc?.connectionState || 'closed';
+      $('rtcNote').textContent = `WebRTC: ${state}`;
+      if (state === 'connected') status('WebRTC connected — hardware video decode active');
       if (['failed', 'closed', 'disconnected'].includes(rtcPc.connectionState)) {
-        status('WebRTC stream lost — falling back to the canvas', true);
-        rtcStop();
+        status('WebRTC connection failed — falling back to the canvas', true);
+        rtcStop({keepNote: true});
+        $('rtcNote').textContent = `WebRTC ${state}; canvas fallback active`;
       }
+    };
+    rtcPc.oniceconnectionstatechange = () => {
+      if (rtcPc) $('rtcNote').textContent = `ICE: ${rtcPc.iceConnectionState}`;
     };
     const offer = await rtcPc.createOffer();
     await rtcPc.setLocalDescription(offer);
+    // The offer is unusable for a browser behind NAT until ICE candidates
+    // have been gathered. Do not signal an empty-candidate SDP; trickle ICE
+    // is not implemented by this simple HTTP offer/answer endpoint.
+    if (rtcPc.iceGatheringState !== 'complete') {
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('ICE candidate gathering timed out; check STUN/UDP access')), 12000);
+        const done = () => {
+          if (rtcPc && rtcPc.iceGatheringState === 'complete') {
+            clearTimeout(timer);
+            rtcPc.removeEventListener('icegatheringstatechange', done);
+            resolve();
+          }
+        };
+        rtcPc.addEventListener('icegatheringstatechange', done);
+        done();
+      });
+    }
     const r = await fetch('/api/webrtc/offer', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -691,18 +715,19 @@ async function rtcStart(){
   } catch (e) {
     status('WebRTC: ' + (e.message || e), true);
     $('rtcNote').textContent = 'unavailable: ' + (e.message || e);
-    rtcStop();
+    rtcStop({keepNote: true});
   }
 }
 
-function rtcStop(){
+function rtcStop(opts){
+  opts = opts || {};
   if (rtcPc) { try { rtcPc.close(); } catch(_) {} rtcPc = null; }
   rtcVideo.srcObject = null;
   rtcVideo.hidden = true;
   document.querySelectorAll('audio[data-rtc]').forEach(a => a.remove());
   $('rtcChk').checked = false;
   const note = $('rtcNote');
-  if (note) note.textContent = '';
+  if (note && !opts.keepNote) note.textContent = '';
 }
 
 function rtcRefreshNote(){

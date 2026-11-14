@@ -73,8 +73,10 @@ _MAX_PEERS = 4
 
 
 def _media_loop():
+    global _loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    _loop = loop
     _loop_started.set()
     loop.run_forever()
 
@@ -123,15 +125,10 @@ def _make_tracks(m):
     return video, audio_tr
 
 
-def handle_offer(sdp: str, type_: str, user: str):
-    """SDP offer in, answer dict out (runs on the media loop)."""
-    m = _import_aiortc()
-    if m is False:
-        raise RuntimeError(_log_reason)
+async def _create_peer_answer(m, sdp, type_, user):
+    """Create and signal the peer entirely on its owning asyncio loop."""
     if len(_peers) >= _MAX_PEERS:
         raise RuntimeError(f"too many WebRTC peers (cap {_MAX_PEERS})")
-    _ensure_loop()
-
     pc = m["RTCPeerConnection"](
         m["RTCConfiguration"](iceServers=[m["RTCIceServer"](urls=config.WEBRTC_STUN.split(","))])
         if config.WEBRTC_STUN
@@ -161,19 +158,32 @@ def handle_offer(sdp: str, type_: str, user: str):
         if pc.connectionState in ("failed", "closed", "disconnected"):
             _cleanup()
 
-    async def _answer():
+    try:
         await pc.setRemoteDescription(m["RTCSessionDescription"](sdp=sdp, type=type_))
         ans = await pc.createAnswer()
         await pc.setLocalDescription(ans)
-        return {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
-
-    fut = asyncio.run_coroutine_threadsafe(_answer(), _loop)
-    try:
-        answer = fut.result(timeout=20)
+        result = {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
     except Exception:
         _cleanup()
         raise
     audit.event(audit.SECURITY, "webrtc_offer", user=user, result="ok", detail={"peers": len(_peers)})
+    return result
+
+
+def handle_offer(sdp: str, type_: str, user: str):
+    """SDP offer in, answer dict out. aiortc objects are created and used
+    only on the dedicated media loop; touching PeerConnection from the
+    HTTP worker thread causes ICE/DTLS state corruption."""
+    m = _import_aiortc()
+    if m is False:
+        raise RuntimeError(_log_reason)
+    _ensure_loop()
+    fut = asyncio.run_coroutine_threadsafe(_create_peer_answer(m, sdp, type_, user), _loop)
+    try:
+        answer = fut.result(timeout=30)
+    except Exception:
+        _cleanup()
+        raise
     return answer
 
 
