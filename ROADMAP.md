@@ -271,7 +271,7 @@ Icebox items are tracked in the [Icebox milestone](https://github.com/CloudCompi
 
 ### v2.6.0 — Security & Multi-User
 
-**Target:** 2027-08-01 · **Milestone:** [view](https://github.com/CloudCompile/remote-desktop/milestones/7) · **Epic:** [#7](https://github.com/CloudCompile/remote-desktop/issues/7) · **Draft release:** [v2.6.0](https://github.com/CloudCompile/remote-desktop/releases/tag/v2.6.0)
+**Target:** 2027-08-01 · **Milestone:** [view](https://github.com/CloudCompile/remote-desktop/milestones/7) · **Epic:** [#7](https://github.com/CloudCompile/remote-desktop/issues/7) · **Release:** [v2.6.0](https://github.com/CloudCompile/remote-desktop/releases/tag/v2.6.0) ✅ shipped
 
 **Theme.** Move from one trusted user with a password to explicit accounts, roles, second factors and an audit trail.
 
