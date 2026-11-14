@@ -3367,8 +3367,13 @@ if (!audioOnlyOn()) connect();   // audio-only boot skips the framebuffer (#98);
 let confirmResolve = null, confirmLastFocus = null;
 function confirmAction(opts){
   opts = opts || {};
-  $('confirmTitle').textContent = opts.title || i18nT('confirm.title', 'Are you sure?');
-  $('confirmBody').textContent = opts.body || '';
+  // never render a blank dialog: title/body always resolve to something
+  const title = opts.title || i18nT('confirm.title', 'Are you sure?');
+  const body = opts.body || '';
+  $('confirmTitle').textContent = title;
+  $('confirmBody').textContent = body;
+  $('confirmTitle').hidden = !title;
+  $('confirmBody').hidden = !body;
   const ok = $('confirmOk');
   ok.textContent = opts.confirmLabel || i18nT('btn.confirm', 'Confirm');
   // destructive default buttons are NOT primary (#121): plain styling, red hint via aria
