@@ -3419,10 +3419,6 @@ storeOp = async function (op, pkg){
  *  Security & account sheet (#109-#119, #123)                         *
  * ------------------------------------------------------------------ */
 let secCaps = { admin: false, operate: true };
-function fmtWhen(ts){
-  if (!ts) return '—';
-  try { return new Date(ts * 1000).toLocaleString(); } catch (_) { return String(ts); }
-}
 function secUser(){ return secCaps.user || ''; }
 
 async function loadSec(){

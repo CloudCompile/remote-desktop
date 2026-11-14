@@ -8,6 +8,7 @@ itself, the interpreter it runs on, the vendored third-party web assets
 
 Usage: sbom.py --version 2.6.0 [--out sbom.json]
 """
+
 import argparse
 import hashlib
 import json
@@ -77,16 +78,14 @@ def main():
             "scope": "required",
         },
     ]
-    components += [
-        {"type": "library", "name": n, "scope": s, "comment": "dev tooling only"}
-        for n, s in DEV_TOOLS
-    ]
+    components += [{"type": "library", "name": n, "scope": s, "comment": "dev tooling only"} for n, s in DEV_TOOLS]
     components += vendored_components()
 
     bom = {
         "bomFormat": "CycloneDX",
         "specVersion": "1.5",
-        "serialNumber": f"urn:uuid:{hashlib.sha256(args.version.encode()).hexdigest()[:8]}-{hashlib.sha256(str(time.time()).encode()).hexdigest()[:8]}-4a4f-8c0d-{'f' * 12}",        "metadata": {
+        "serialNumber": f"urn:uuid:{hashlib.sha256(args.version.encode()).hexdigest()[:8]}-{hashlib.sha256(str(time.time()).encode()).hexdigest()[:8]}-4a4f-8c0d-{'f' * 12}",
+        "metadata": {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "component": {
                 "type": "application",
