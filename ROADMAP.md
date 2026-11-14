@@ -28,7 +28,7 @@ Make a real desktop usable from a phone or tablet, on a machine you control, wit
 | **v2.3.0** | Apps, Windows & Clipboard | 2027-03-21 | [v2.3.0](https://github.com/CloudCompile/remote-desktop/milestones/4) | [#4](https://github.com/CloudCompile/remote-desktop/issues/4) | 18 | ✅ Shipped 2026-11-13 |
 | **v2.4.0** | Files & Transfer | 2027-05-02 | [v2.4.0](https://github.com/CloudCompile/remote-desktop/milestones/5) | [#5](https://github.com/CloudCompile/remote-desktop/issues/5) | 16 | ✅ Shipped 2026-11-13 |
 | **v2.5.0** | Audio & Media | 2027-06-13 | [v2.5.0](https://github.com/CloudCompile/remote-desktop/milestones/6) | [#6](https://github.com/CloudCompile/remote-desktop/issues/6) | 15 | ✅ Shipped 2026-11-13 |
-| **v2.6.0** | Security & Multi-User | 2027-08-01 | [v2.6.0](https://github.com/CloudCompile/remote-desktop/milestones/7) | [#7](https://github.com/CloudCompile/remote-desktop/issues/7) | 19 | Planned |
+| **v2.6.0** | Security & Multi-User | 2027-08-01 | [v2.6.0](https://github.com/CloudCompile/remote-desktop/milestones/7) | [#7](https://github.com/CloudCompile/remote-desktop/issues/7) | 19 | ✅ Shipped 2026-11-14 |
 | **v3.0.0** | Platform Expansion | 2027-10-03 | [v3.0.0](https://github.com/CloudCompile/remote-desktop/milestones/8) | [#8](https://github.com/CloudCompile/remote-desktop/issues/8) | 22 | Planned |
 
 Icebox items are tracked in the [Icebox milestone](https://github.com/CloudCompile/remote-desktop/milestones/9) and have no target date.
