@@ -47,8 +47,8 @@ jobs:
           import re, pathlib
           sw = pathlib.Path("web/sw.js").read_text()
           srv = pathlib.Path("remote_desktop/config.py").read_text()
-          sw_v = re.search(r"const VERSION = '([^']+)'", sw).group(1)
-          srv_v = re.search(r'VERSION = "([^"]+)"', srv).group(1)
+          sw_v = re.search(r"const VERSION = '([^']+)'", sw).group(1).lstrip("v")
+          srv_v = re.search(r'VERSION = "([^"]+)"', srv).group(1).lstrip("v")
           if sw_v != srv_v:
               print(f"web/sw.js cache version {sw_v!r} != server version {srv_v!r} — "
                     "bump const VERSION in web/sw.js on every release")
