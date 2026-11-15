@@ -1760,10 +1760,12 @@ $('pasteToBtn').addEventListener('click', async () => {
   } catch (e) { status('Paste failed: ' + (e.message || e), true); }
 });
 $('typeBtn').addEventListener('click', async () => {
-  let text = '';
-  try { text = await navigator.clipboard.readText(); }
-  catch (_) { status('Phone clipboard blocked', true); return; }
-  if (!text) { status('Phone clipboard is empty', true); return; }
+  // This action types a prompt into the already-focused remote app; it is
+  // deliberately independent of the phone clipboard (mobile readText is
+  // permission-gated and often rejects after opening a sheet).
+  const text = window.prompt(i18nT('more.typePrompt', 'Text to enter on the desktop'));
+  if (text === null || text === '') return;
+  if (text.length > 100000) { status('Text is too long (100,000 character limit)', true); return; }
   // Explicit fallback: multiline text still goes through clipboard paste,
   // never simulated Return, because chat apps submit on newline.
   const mode = /[\r\n]/.test(text) || text.length >= 128 ? 'clipboard' : 'keys';
@@ -3376,7 +3378,7 @@ setInterval(async () => {
 if ('serviceWorker' in navigator &&
     (window.isSecureContext || ['localhost', '127.0.0.1'].includes(location.hostname))) {
   addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=2.6.9').then(reg => {
+    navigator.serviceWorker.register('/sw.js?v=2.6.10').then(reg => {
       if (reg.waiting && navigator.serviceWorker.controller)
         status('App update ready — reload to apply');
       reg.addEventListener('updatefound', () => {

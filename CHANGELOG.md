@@ -10,6 +10,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/), semver.
 - v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones, release themes
   and linked issues.
 
+## [2.6.10] — 2026-11-15
+
+### Fixed
+
+- The More-sheet Type action no longer silently depends on mobile
+  `navigator.clipboard.readText()` permission. It prompts for text and
+  types/pastes directly into the focused desktop app; phone clipboard
+  transfer remains the separate Phone → Desktop action.
+
 ## [2.6.9] — 2026-11-15
 
 ### Fixed
