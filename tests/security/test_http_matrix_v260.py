@@ -330,6 +330,30 @@ def test_post_without_csrf_token_rejected(sec_server, accounts):
     assert code == 403 and sec_server.request("/api/auth_check", cookie=cookie)[0] == 200  # session still valid
 
 
+def test_csrf_rejection_does_not_poison_reused_http_connection(sec_server, accounts):
+    """Mobile token-refresh retry must not be parsed as a suffix of the
+    rejected POST body on a persistent HTTP/1.1 connection."""
+    from http.client import HTTPConnection
+
+    cookie, csrf_tok = accounts["admin"]
+    conn = HTTPConnection("127.0.0.1", sec_server.port, timeout=5)
+    headers = {"Host": "test", "Cookie": cookie, "Content-Type": "application/json"}
+    body = json.dumps({"text": "stale-token-body"})
+    try:
+        conn.request("POST", "/api/clipboard/set", body=body, headers=headers)
+        first = conn.getresponse()
+        assert first.status == 403
+        first.read()  # drain rejected response
+
+        # Same TCP connection, next request is the actual refresh request.
+        conn.request("GET", "/api/csrf", headers={"Host": "test", "Cookie": cookie})
+        second = conn.getresponse()
+        payload = json.loads(second.read())
+        assert second.status == 200 and len(payload["token"]) == 64
+    finally:
+        conn.close()
+
+
 def test_post_with_stale_token_rejected(sec_server, accounts):
     cookie, _ = accounts["admin"]
     code, _, _ = _post(sec_server, cookie, "/api/clipboard/set", {"text": "x"}, csrf_tok="0" * 64)

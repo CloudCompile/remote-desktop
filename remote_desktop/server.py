@@ -736,10 +736,16 @@ class Handler(http.BaseHandler):
         # requests with Origin/Sec-Fetch-Site headers are origin-checked.
         if path not in CSRF_EXEMPT and not auth._csrf_ok(self):
             audit.event(audit.SECURITY, "csrf_rejected", handler=self, target=path, result="denied")
+            # The body has not been consumed yet. If we keep this HTTP/1.1
+            # connection alive, the next request can be parsed as a suffix
+            # of the unread JSON body (observed on mobile retry: `...}GET`).
+            # Close after this response so the browser's CSRF refresh/retry
+            # necessarily uses a clean connection.
+            self.close_connection = True
             return self._json(
                 403,
                 {"ok": False, "error": "csrf token missing or invalid"},
-                extra={"X-CSRF-Required": "1"},
+                extra={"X-CSRF-Required": "1", "Connection": "close"},
             )
 
         r = self._require(self._cap_needed(path, _POST_CAPS))

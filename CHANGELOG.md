@@ -10,6 +10,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/), semver.
 - v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones, release themes
   and linked issues.
 
+## [2.6.9] — 2026-11-15
+
+### Fixed
+
+- A rejected CSRF POST now explicitly closes the HTTP/1.1 connection
+  because its request body has not been consumed; this prevents the next
+  token-refresh GET from being parsed as body suffix (`...}GET`). The
+  fetch wrapper drains the 403 response before retrying. Added a
+  persistent-connection regression test.
+
 ## [2.6.8] — 2026-11-15
 
 ### Fixed

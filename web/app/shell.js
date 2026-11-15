@@ -53,6 +53,9 @@ window.fetch = async function (input, init) {
   // token; role/origin errors are not retried.
   if (sameOrigin && mutating && !skip && response.status === 403) {
     try {
+      // Drain the rejected response before refreshing CSRF; otherwise some
+      // mobile HTTP stacks reuse a connection with unread response bytes.
+      await response.clone().text();
       const tok = await _csrfFromServer(true);
       if (tok) {
         headers['X-CSRF-Token'] = tok;
@@ -3373,7 +3376,7 @@ setInterval(async () => {
 if ('serviceWorker' in navigator &&
     (window.isSecureContext || ['localhost', '127.0.0.1'].includes(location.hostname))) {
   addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=2.6.8').then(reg => {
+    navigator.serviceWorker.register('/sw.js?v=2.6.9').then(reg => {
       if (reg.waiting && navigator.serviceWorker.controller)
         status('App update ready — reload to apply');
       reg.addEventListener('updatefound', () => {
