@@ -10,6 +10,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/), semver.
 - v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones, release themes
   and linked issues.
 
+## [2.6.8] — 2026-11-15
+
+### Fixed
+
+- CSRF fetch wrapper prefers its freshly fetched session token over a
+  stale readable cookie and retries same-origin mutation responses with
+  403 using a refreshed token. This restores Type/keyboard paste after
+  session/key refresh without weakening the server CSRF check.
+
 ## [2.6.7] — 2026-11-15
 
 ### Fixed

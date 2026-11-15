@@ -37,7 +37,11 @@ window.fetch = async function (input, init) {
     if (sameOrigin && mutating && !skip && !headers['X-CSRF-Token']) {
       // Prefer a cached session-bound token, but refresh directly from the
       // server when the cookie is absent (e.g. Safari privacy settings).
-      let tok = _csrfFromCookie() || _csrfTokenCache;
+      // Prefer the token most recently issued by the server. A readable
+      // csrf cookie may survive a session/key rotation and be stale even
+      // though it is still present.
+      let tok = (Date.now() - _csrfTokenAt < 60000 && _csrfTokenCache)
+        || _csrfFromCookie() || _csrfTokenCache;
       if (!tok || Date.now() - _csrfTokenAt > 60000) tok = await _csrfFromServer(false);
       if (tok) headers['X-CSRF-Token'] = tok;
       requestInit.headers = headers;
@@ -47,14 +51,16 @@ window.fetch = async function (input, init) {
   // Safari can retain an old readable CSRF cookie after a session refresh.
   // Retry only the explicit CSRF rejection, once, with the server's current
   // token; role/origin errors are not retried.
-  if (sameOrigin && mutating && !skip && response.status === 403 &&
-      response.headers.get('X-CSRF-Required') === '1') {
+  if (sameOrigin && mutating && !skip && response.status === 403) {
     try {
       const tok = await _csrfFromServer(true);
       if (tok) {
         headers['X-CSRF-Token'] = tok;
         requestInit.headers = headers;
         response = await _origFetch(input, requestInit);
+        // Publish a refreshed readable token for callers that do not use
+        // this wrapper (e.g. code that manually adds request headers).
+        document.cookie = `rd_csrf=${encodeURIComponent(tok)}; Path=/; SameSite=Lax`;
       }
     } catch (_) {}
   }
@@ -3367,7 +3373,7 @@ setInterval(async () => {
 if ('serviceWorker' in navigator &&
     (window.isSecureContext || ['localhost', '127.0.0.1'].includes(location.hostname))) {
   addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=2.6.7').then(reg => {
+    navigator.serviceWorker.register('/sw.js?v=2.6.8').then(reg => {
       if (reg.waiting && navigator.serviceWorker.controller)
         status('App update ready — reload to apply');
       reg.addEventListener('updatefound', () => {
