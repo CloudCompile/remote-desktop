@@ -10,6 +10,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/), semver.
 - v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones, release themes
   and linked issues.
 
+## [2.6.7] — 2026-11-15
+
+### Fixed
+
+- Mobile keyboard now refreshes a stale CSRF token once when a paste
+  request is rejected, and reports failure visibly instead of silently
+  falling back to clipboard notification without inserting text.
+
 ## [2.6.6] — 2026-11-15
 
 ### Fixed

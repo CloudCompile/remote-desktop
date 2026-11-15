@@ -8,30 +8,57 @@
 
 /* ---- CSRF fetch wrapper (#116) ------------------------------------ */
 const _origFetch = window.fetch.bind(window);
+let _csrfTokenCache = '', _csrfTokenAt = 0;
 function _csrfFromCookie() {
   const m = document.cookie.match(/(?:^|;\s*)rd_csrf=([^;]+)/);
   return m ? m[1] : '';
 }
+async function _csrfFromServer(force) {
+  if (!force && _csrfTokenCache && Date.now() - _csrfTokenAt < 60000) return _csrfTokenCache;
+  const r = await _origFetch('/api/csrf', { credentials: 'same-origin', cache: 'no-store' });
+  if (!r.ok) return '';
+  const j = await r.json();
+  if (j.token) { _csrfTokenCache = j.token; _csrfTokenAt = Date.now(); }
+  return j.token || '';
+}
 window.fetch = async function (input, init) {
+  let requestInit = init || {};
+  let method = '', url = '', sameOrigin = false, mutating = false, skip = false;
+  let headers = {};
   try {
-    init = init || {};
-    const method = (init.method || (init.body ? 'POST' : 'GET')).toUpperCase();
-    const url = typeof input === 'string' ? input : (input && input.url) || String(input || '');
-    const sameOrigin = url.startsWith('/') || url.startsWith(window.location.origin + '/');
-    const mutating = method === 'POST' || method === 'DELETE' || method === 'PUT' || method === 'PATCH';
-    const skip = url.includes('/api/login') || url.includes('/api/logout') || url.includes('/api/webauthn/auth');
-    const h = init.headers instanceof Headers ? Object.fromEntries(init.headers.entries()) : Object.assign({}, init.headers);
-    if (sameOrigin && mutating && !skip && !h['X-CSRF-Token']) {
-      let tok = _csrfFromCookie();
-      if (!tok) {
-        const r = await _origFetch('/api/csrf', { credentials: 'same-origin' });
-        if (r.ok) tok = (await r.json()).token || '';
-      }
-      if (tok) h['X-CSRF-Token'] = tok;
-      init.headers = h;
+    requestInit = Object.assign({}, requestInit);
+    method = (requestInit.method || (requestInit.body ? 'POST' : 'GET')).toUpperCase();
+    url = typeof input === 'string' ? input : (input && input.url) || String(input || '');
+    sameOrigin = url.startsWith('/') || url.startsWith(window.location.origin + '/');
+    mutating = ['POST', 'DELETE', 'PUT', 'PATCH'].includes(method);
+    skip = url.includes('/api/login') || url.includes('/api/logout') || url.includes('/api/webauthn/auth');
+    headers = requestInit.headers instanceof Headers
+      ? Object.fromEntries(requestInit.headers.entries()) : Object.assign({}, requestInit.headers);
+    if (sameOrigin && mutating && !skip && !headers['X-CSRF-Token']) {
+      // Prefer a cached session-bound token, but refresh directly from the
+      // server when the cookie is absent (e.g. Safari privacy settings).
+      let tok = _csrfFromCookie() || _csrfTokenCache;
+      if (!tok || Date.now() - _csrfTokenAt > 60000) tok = await _csrfFromServer(false);
+      if (tok) headers['X-CSRF-Token'] = tok;
+      requestInit.headers = headers;
     }
   } catch (_) { /* never break the caller because of token plumbing */ }
-  return _origFetch(input, init);
+  let response = await _origFetch(input, requestInit);
+  // Safari can retain an old readable CSRF cookie after a session refresh.
+  // Retry only the explicit CSRF rejection, once, with the server's current
+  // token; role/origin errors are not retried.
+  if (sameOrigin && mutating && !skip && response.status === 403 &&
+      response.headers.get('X-CSRF-Required') === '1') {
+    try {
+      const tok = await _csrfFromServer(true);
+      if (tok) {
+        headers['X-CSRF-Token'] = tok;
+        requestInit.headers = headers;
+        response = await _origFetch(input, requestInit);
+      }
+    } catch (_) {}
+  }
+  return response;
 };
 
 import RFB from '../core/rfb.js';
@@ -3340,7 +3367,7 @@ setInterval(async () => {
 if ('serviceWorker' in navigator &&
     (window.isSecureContext || ['localhost', '127.0.0.1'].includes(location.hostname))) {
   addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=2.6.6').then(reg => {
+    navigator.serviceWorker.register('/sw.js?v=2.6.7').then(reg => {
       if (reg.waiting && navigator.serviceWorker.controller)
         status('App update ready — reload to apply');
       reg.addEventListener('updatefound', () => {

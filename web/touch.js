@@ -714,14 +714,18 @@ export function initTouch(app) {
       try {
         const r = await fetch('/api/paste', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, mode: 'keys' }),
+          // Auto mode uses clipboard+Ctrl+V for multiline/bulk text. In chat
+          // apps simulated Return sends each line; typing long strings one
+          // xdotool key at a time can stall the remote browser.
+          body: JSON.stringify({ text, mode: 'auto' }),
         });
         const j = await r.json();
         if (!r.ok || !j.ok) throw new Error(j.error || `HTTP ${r.status}`);
       } catch (err) {
-        // Keep a real fallback if the control API is momentarily unreachable.
-        try { rfb?.clipboardPasteFrom(text); } catch (_) {}
-        if (app.status) app.status('Text input fallback: ' + (err.message || err), true);
+        // Do not report success or silently copy to the VNC clipboard: that
+        // does not insert text into the focused app. Surface the API/CSRF
+        // error so the user knows the text was not delivered.
+        if (app.status) app.status('Phone keyboard text failed: ' + (err.message || err), true);
       }
     });
   };
