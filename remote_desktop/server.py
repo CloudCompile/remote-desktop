@@ -1451,6 +1451,13 @@ class Handler(http.BaseHandler):
             return self._json(200, {"ok": True})
         if len(text) > 100_000:
             return self._json(400, {"ok": False, "error": "text too long"})
+        # Newlines are dangerous as simulated Return presses: chat apps send
+        # each line. Bulk text also stalls a window manager/browser when
+        # xdotool injects one key at a time. Paste these as one clipboard
+        # operation instead; apps receive the whole multiline buffer in the
+        # focused editor and no per-line Enter events are emitted.
+        if mode == "auto" or (mode == "keys" and ("\n" in text or "\r" in text)):
+            mode = "clipboard" if ("\n" in text or "\r" in text or len(text) >= 128) else "keys"
         if mode == "clipboard":
             r = clipboard.clipboard_set(text, user=self.user)
             if not r.get("ok"):

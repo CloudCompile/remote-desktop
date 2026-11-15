@@ -10,6 +10,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/), semver.
 - v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones, release themes
   and linked issues.
 
+## [2.6.6] — 2026-11-15
+
+### Fixed
+
+- Phone-to-desktop multiline and bulk paste now uses X clipboard plus one
+  Ctrl+V instead of simulated Return-per-line or thousands of xdotool
+  key events. Prevents Discord from sending each line and avoids remote
+  browser freezes. Short single-line text continues to use keystrokes.
+- Legacy `mode: keys` multiline requests are also upgraded to clipboard
+  paste for safety.
+
 ## [2.6.5] — 2026-11-15
 
 ### Fixed

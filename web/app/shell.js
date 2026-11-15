@@ -1709,26 +1709,35 @@ $('pasteToBtn').addEventListener('click', async () => {
   catch (_) { status('Phone clipboard blocked – use Share → Copy instead', true); return; }
   if (!text) { status('Phone clipboard is empty', true); return; }
   try {
-    await fetch('/api/clipboard/set', {
+    const r = await fetch('/api/paste', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, mode: 'auto' }),
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    // Keep desktop clipboard/history synchronized for later pastes.
+    fetch('/api/clipboard/set', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
-    });
-    if (rfb) rfb.clipboardPasteFrom(text);   // also notify VNC viewers
+    }).catch(() => {});
     status('Pasted ' + text.length + ' chars to desktop');
-  } catch (_) { status('Paste failed', true); }
+  } catch (e) { status('Paste failed: ' + (e.message || e), true); }
 });
 $('typeBtn').addEventListener('click', async () => {
   let text = '';
   try { text = await navigator.clipboard.readText(); }
   catch (_) { status('Phone clipboard blocked', true); return; }
   if (!text) { status('Phone clipboard is empty', true); return; }
+  // Explicit fallback: multiline text still goes through clipboard paste,
+  // never simulated Return, because chat apps submit on newline.
+  const mode = /[\r\n]/.test(text) || text.length >= 128 ? 'clipboard' : 'keys';
   try {
     const r = await fetch('/api/paste', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, mode }),
     });
     const j = await r.json();
-    status(j.ok ? 'Typed ' + text.length + ' chars into the focused window' : 'Typing failed', !j.ok);
+    status(j.ok ? (mode === 'clipboard' ? 'Pasted ' : 'Typed ') + text.length + ' chars into the focused window' : 'Typing failed: ' + (j.error || ''), !j.ok);
     closeSheets();
   } catch (_) { status('Typing failed', true); }
 });
@@ -2034,13 +2043,19 @@ document.addEventListener('paste', async e => {
     if (!text) { try { text = await navigator.clipboard.readText(); } catch(_) {} }
     if (text) {
       e.preventDefault();
-      if (rfb) rfb.clipboardPasteFrom(text);
       // record phone-side copies in the shared clipboard history + X selections
-      fetch('/api/clipboard/set', {
+      fetch('/api/paste', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-      }).catch(() => {});
-      status(`Pasted ${text.length} chars`);
+        body: JSON.stringify({ text, mode: 'auto' }),
+      }).then(async r => {
+        const j = await r.json();
+        if (!r.ok || !j.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        fetch('/api/clipboard/set', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+        }).catch(() => {});
+        status(`Pasted ${text.length} chars`);
+      }).catch(err => status('Paste failed: ' + (err.message || err), true));
     }
   } catch(_) {}
 }, true);
@@ -3325,7 +3340,7 @@ setInterval(async () => {
 if ('serviceWorker' in navigator &&
     (window.isSecureContext || ['localhost', '127.0.0.1'].includes(location.hostname))) {
   addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=2.6.5').then(reg => {
+    navigator.serviceWorker.register('/sw.js?v=2.6.6').then(reg => {
       if (reg.waiting && navigator.serviceWorker.controller)
         status('App update ready — reload to apply');
       reg.addEventListener('updatefound', () => {
