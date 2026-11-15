@@ -10,6 +10,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/), semver.
 - v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones, release themes
   and linked issues.
 
+## [2.6.5] — 2026-11-15
+
+### Fixed
+
+- Mobile keyboard bridge now keeps the textarea value intact for native
+  IME/autocorrect, diffs inserted/deleted text, batches committed text,
+  and serializes special keys after pending text instead of clearing the
+  field on every input event.
+
 ## [2.6.4] — 2026-11-15
 
 ### Fixed

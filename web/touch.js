@@ -641,6 +641,7 @@ export function initTouch(app) {
     kb.focus({ preventScroll: true });
     showCursor();
   }
+  kb.addEventListener('blur', () => { kb.style.pointerEvents = 'none'; });
   if (app.keyboardButton) {
     app.keyboardButton.addEventListener('click', () => {
       if (document.activeElement === kb) {
@@ -675,6 +676,34 @@ export function initTouch(app) {
   let mobileTextTimer = null;
   let mobileTextChain = Promise.resolve();
   let justCommittedComposition = '';
+  let lastMobileValue = kb.value || '';
+  const keysyms = { Backspace: 0xff08, Enter: 0xff0d, Tab: 0xff09, Escape: 0xff1b,
+                    ArrowLeft: 0xff51, ArrowUp: 0xff52, ArrowRight: 0xff53, ArrowDown: 0xff54 };
+  const queueMobileKey = (keysym, code, down) => {
+    mobileTextChain = mobileTextChain.then(() => {
+      if (rfb) rfb.sendKey(keysym, code, down);
+    });
+  };
+  const queueBackspaces = count => {
+    const n = Math.min(256, Math.max(1, count));
+    mobileTextChain = mobileTextChain.then(() => {
+      if (!rfb) return;
+      for (let i = 0; i < n; i++) {
+        rfb.sendKey(0xff08, 'Backspace', true);
+        rfb.sendKey(0xff08, 'Backspace', false);
+      }
+    });
+  };
+  const diffText = (before, after) => {
+    const a = Array.from(before), b = Array.from(after);
+    let start = 0;
+    while (start < a.length && start < b.length && a[start] === b[start]) start++;
+    let suffix = 0;
+    while (suffix < a.length - start && suffix < b.length - start &&
+           a[a.length - 1 - suffix] === b[b.length - 1 - suffix]) suffix++;
+    return { deleted: a.length - start - suffix,
+             inserted: b.slice(start, b.length - suffix).join('') };
+  };
   const flushMobileText = () => {
     clearTimeout(mobileTextTimer);
     mobileTextTimer = null;
@@ -702,12 +731,13 @@ export function initTouch(app) {
     clearTimeout(mobileTextTimer);
     mobileTextTimer = setTimeout(flushMobileText, 90);
   };
+  kb.addEventListener('focus', () => { lastMobileValue = kb.value || ''; });
   kb.addEventListener('compositionstart', () => { composing = true; });
   kb.addEventListener('compositionupdate', () => { composing = true; });
   kb.addEventListener('compositionend', async (e) => {
     composing = false;
     const text = e.data || '';
-    kb.value = '';
+    lastMobileValue = kb.value || '';
     if (!rfb || !text) return;
     justCommittedComposition = text;
     setTimeout(() => { if (justCommittedComposition === text) justCommittedComposition = ''; }, 800);
@@ -717,36 +747,38 @@ export function initTouch(app) {
   });
   kb.addEventListener('keydown', (e) => {
     if (!rfb || composing || e.isComposing) return;
-    // Printable text and Backspace arrive through input below. Forward only
-    // non-text keys here (Enter, arrows, modifiers, Escape, etc.).
+    // Printable text/backspace are diffed from the textarea's input event.
+    // Queue other keys behind pending text so Enter cannot overtake a batch.
     if (e.key.length === 1 || e.key === 'Backspace') return;
     const ks = keysymFor(e.key);
-    if (ks !== null) { rfb.sendKey(ks, e.code || e.key, true); e.preventDefault(); }
+    if (ks !== null) {
+      e.preventDefault();
+      flushMobileText();
+      queueMobileKey(ks, e.code || e.key, true);
+    }
   });
   kb.addEventListener('keyup', (e) => {
     if (!rfb || composing || e.isComposing) return;
     if (e.key.length === 1 || e.key === 'Backspace') return;
     const ks = keysymFor(e.key);
-    if (ks !== null) rfb.sendKey(ks, e.code || e.key, false);
+    if (ks !== null) queueMobileKey(ks, e.code || e.key, false);
   });
   kb.addEventListener('input', (e) => {
     if (!rfb || composing || e.isComposing) return;
-    if (e.inputType === 'deleteContentBackward' && !e.data) {
-      rfb.sendKey(0xff08, 'Backspace', true);
-      rfb.sendKey(0xff08, 'Backspace', false);
-      kb.value = '';
-      return;
-    }
-    const text = e.data || kb.value;
+    const value = kb.value || '';
+    const { deleted, inserted } = diffText(lastMobileValue, value);
+    lastMobileValue = value;
     // Some mobile browsers emit a final input event after compositionend
-    // with the same committed string. It was already sent above.
-    if (text && justCommittedComposition && text === justCommittedComposition) {
+    // with the same committed string. Compositionend already sent it above.
+    if (inserted && justCommittedComposition && inserted === justCommittedComposition) {
       justCommittedComposition = '';
-      kb.value = '';
       return;
     }
-    if (text) queueMobileText(text);
-    kb.value = '';
+    if (deleted) {
+      flushMobileText();
+      queueBackspaces(deleted);
+    }
+    if (inserted) queueMobileText(inserted);
   });
 
   /* ---------------- extra keys panel (user-editable, #48) ---------------- */
