@@ -10,6 +10,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/), semver.
 - v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones, release themes
   and linked issues.
 
+## [2.6.3] — 2026-11-15
+
+### Fixed
+
+- Mobile on-screen keyboard now uses a visible, in-viewport focus target
+  (mobile browsers reject off-screen 1px inputs); keyboard stays focused
+  while typing and toggles closed on the keyboard button.
+- Printable mobile text is sent through text-input events only, avoiding
+  duplicate characters from keydown + input.
+
 ## [2.6.2] — 2026-11-14
 
 ### Fixed

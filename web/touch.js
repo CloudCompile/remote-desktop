@@ -620,18 +620,35 @@ export function initTouch(app) {
     kb.setAttribute('inputmode', 'text');
     kb.setAttribute('autocorrect', 'off');
     kb.rows = 1;
-    kb.style.cssText = 'position:fixed;bottom:-1000px;left:0;width:1px;height:1px;opacity:0;' +
-                       'font-size:16px;color:transparent;background:transparent;border:0;';
+    kb.setAttribute('aria-label', 'Remote desktop text input');
+    // Mobile Safari/Chrome refuse to open the IME for a 1px element outside
+    // the viewport. Keep a real, fixed, 40px focus target inside the visual
+    // viewport; opacity is low, but it remains hit-testable and focused.
+    kb.style.cssText = 'position:fixed;left:8px;bottom:calc(env(safe-area-inset-bottom,0px) + 8px);' +
+                       'width:40px;height:40px;min-width:40px;min-height:40px;opacity:.02;' +
+                       'z-index:10001;font-size:16px;line-height:20px;color:transparent;' +
+                       'caret-color:transparent;background:transparent;border:0;padding:0;' +
+                       'resize:none;overflow:hidden;pointer-events:none;';
     document.body.appendChild(kb);
   }
   function openKeyboard() {
-    kb.style.opacity = '0.01';
+    // Focus must happen synchronously inside the toolbar's trusted click;
+    // delaying or moving the target off-screen makes mobile browsers suppress
+    // the software keyboard.
+    kb.style.bottom = 'calc(env(safe-area-inset-bottom,0px) + 8px)';
+    kb.style.opacity = '.02';
     kb.style.pointerEvents = 'auto';
     kb.focus({ preventScroll: true });
-    setTimeout(() => { kb.style.opacity = '0'; kb.style.pointerEvents = 'none'; }, 400);
+    showCursor();
   }
   if (app.keyboardButton) {
-    app.keyboardButton.addEventListener('click', () => { openKeyboard(); showCursor(); });
+    app.keyboardButton.addEventListener('click', () => {
+      if (document.activeElement === kb) {
+        kb.blur();
+        kb.style.pointerEvents = 'none';
+      } else openKeyboard();
+      showCursor();
+    });
   } else {
     const b = document.createElement('button');
     b.textContent = '⌨';
@@ -674,11 +691,15 @@ export function initTouch(app) {
   });
   kb.addEventListener('keydown', (e) => {
     if (!rfb || composing || e.isComposing) return;
+    // Printable text arrives through input (supports mobile IMEs and avoids
+    // duplicate characters). Backspace is handled by inputType below.
+    if (e.key.length === 1 || e.key === 'Backspace') return;
     const ks = keysymFor(e.key);
     if (ks !== null) { rfb.sendKey(ks, e.code || e.key, true); e.preventDefault(); }
   });
   kb.addEventListener('keyup', (e) => {
     if (!rfb || composing || e.isComposing) return;
+    if (e.key.length === 1 || e.key === 'Backspace') return;
     const ks = keysymFor(e.key);
     if (ks !== null) rfb.sendKey(ks, e.code || e.key, false);
   });
