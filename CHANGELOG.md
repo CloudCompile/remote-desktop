@@ -10,6 +10,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/), semver.
 - v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones, release themes
   and linked issues.
 
+## [2.6.4] — 2026-11-15
+
+### Fixed
+
+- Mobile keyboard text now travels as committed text through the paste
+  API (batched), rather than incomplete per-key events; composition text
+  is deduplicated and special keys remain VNC key events.
+
 ## [2.6.3] — 2026-11-15
 
 ### Fixed

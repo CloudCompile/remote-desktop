@@ -666,11 +666,42 @@ export function initTouch(app) {
                        ArrowLeft: 0xff51, ArrowUp: 0xff52, ArrowRight: 0xff53, ArrowDown: 0xff54 };
     return specials[key] ?? null;
   };
-  // IME composition (#47): while an editor is composing (Chinese, Japanese,
-  // Korean, accent pickers, autocorrect), key/input events are pre-commit
-  // noise and must not be forwarded. The committed text is typed in one shot
-  // through the paste API on compositionend.
+  // Mobile keyboards are text editors, not physical keyboards. Their keydown
+  // stream is incomplete (often just one key of a sentence), so forward
+  // committed text through /api/paste and reserve VNC key events for special
+  // keys. Batch fast input so we don't spawn xdotool once per character.
   let composing = false;
+  let pendingMobileText = '';
+  let mobileTextTimer = null;
+  let mobileTextChain = Promise.resolve();
+  let justCommittedComposition = '';
+  const flushMobileText = () => {
+    clearTimeout(mobileTextTimer);
+    mobileTextTimer = null;
+    const text = pendingMobileText;
+    pendingMobileText = '';
+    if (!rfb || !text) return;
+    mobileTextChain = mobileTextChain.then(async () => {
+      try {
+        const r = await fetch('/api/paste', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, mode: 'keys' }),
+        });
+        const j = await r.json();
+        if (!r.ok || !j.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      } catch (err) {
+        // Keep a real fallback if the control API is momentarily unreachable.
+        try { rfb?.clipboardPasteFrom(text); } catch (_) {}
+        if (app.status) app.status('Text input fallback: ' + (err.message || err), true);
+      }
+    });
+  };
+  const queueMobileText = text => {
+    if (!text) return;
+    pendingMobileText += text;
+    clearTimeout(mobileTextTimer);
+    mobileTextTimer = setTimeout(flushMobileText, 90);
+  };
   kb.addEventListener('compositionstart', () => { composing = true; });
   kb.addEventListener('compositionupdate', () => { composing = true; });
   kb.addEventListener('compositionend', async (e) => {
@@ -678,21 +709,16 @@ export function initTouch(app) {
     const text = e.data || '';
     kb.value = '';
     if (!rfb || !text) return;
-    try {
-      const r = await fetch('/api/paste', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-      });
-      const j = await r.json();
-      if (app.status) app.status(j.ok ? 'Sent ' + text.length + ' chars' : 'Typing failed', !j.ok);
-    } catch (_) {
-      rfb.clipboardPasteFrom(text);      // control API unreachable: VNC clipboard fallback
-    }
+    justCommittedComposition = text;
+    setTimeout(() => { if (justCommittedComposition === text) justCommittedComposition = ''; }, 800);
+    flushMobileText();
+    queueMobileText(text);
+    flushMobileText();
   });
   kb.addEventListener('keydown', (e) => {
     if (!rfb || composing || e.isComposing) return;
-    // Printable text arrives through input (supports mobile IMEs and avoids
-    // duplicate characters). Backspace is handled by inputType below.
+    // Printable text and Backspace arrive through input below. Forward only
+    // non-text keys here (Enter, arrows, modifiers, Escape, etc.).
     if (e.key.length === 1 || e.key === 'Backspace') return;
     const ks = keysymFor(e.key);
     if (ks !== null) { rfb.sendKey(ks, e.code || e.key, true); e.preventDefault(); }
@@ -711,13 +737,15 @@ export function initTouch(app) {
       kb.value = '';
       return;
     }
-    if (!e.data) return;
-    if (e.data.length > 1) rfb.clipboardPasteFrom(e.data);
-    else for (const ch of e.data) {
-      const ks = ch.charCodeAt(0);
-      rfb.sendKey(ks, ch, true);
-      rfb.sendKey(ks, ch, false);
+    const text = e.data || kb.value;
+    // Some mobile browsers emit a final input event after compositionend
+    // with the same committed string. It was already sent above.
+    if (text && justCommittedComposition && text === justCommittedComposition) {
+      justCommittedComposition = '';
+      kb.value = '';
+      return;
     }
+    if (text) queueMobileText(text);
     kb.value = '';
   });
 
