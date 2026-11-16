@@ -2012,16 +2012,23 @@ const clipPollStop = () => { if (clipPoll) { clearInterval(clipPoll); clipPoll =
  *  on user action/focus, never silently in the background). Denied    *
  *  clipboard permission degrades to the manual Desktop → Phone flow.  *
  * ------------------------------------------------------------------ */
-let syncCursor = null, syncTimer = null, syncKnownOn = false;
-async function syncTick(){
+let syncCursor = localStorage.getItem('rd_syncCursor') || null, syncTimer = null, syncKnownOn = false;
+async function syncTick(cursorOnly){
   if (document.hidden) return;
   try {
-    const r = await fetch('/api/clipboard/sync' + (syncCursor ? '?since=' + encodeURIComponent(syncCursor) : ''), { cache: 'no-store' });
+    const r = await fetch('/api/clipboard/sync' + (cursorOnly ? '?peek=1' : (syncCursor ? '?since=' + encodeURIComponent(syncCursor) : '')), { cache: 'no-store' });
     const j = await r.json();
     if (!j.enabled) { if (syncKnownOn) { $('clipSyncChk').checked = false; syncKnownOn = false; paintSyncNote(); } stopSyncPoll(); return; }
+    if (cursorOnly) {
+      // silent catch-up after a reload: adopt the server's newest id so
+      // old clipboard items are never re-pushed to this device
+      if (j.cursor && !syncCursor) { syncCursor = j.cursor; localStorage.setItem('rd_syncCursor', syncCursor); }
+      return;
+    }
     for (const it of (j.items || [])) {
       syncCursor = it.id;
       try {
+        localStorage.setItem('rd_syncCursor', syncCursor);
         await navigator.clipboard.writeText(it.text);
         toast('📋 ' + (it.text || '').slice(0, 60));
       } catch (_) {
@@ -2031,7 +2038,12 @@ async function syncTick(){
     }
   } catch (_) {}
 }
-function startSyncPoll(){ stopSyncPoll(); syncTick(); syncTimer = setInterval(syncTick, 5000); }
+function startSyncPoll(peekFirst){
+  stopSyncPoll();
+  if (peekFirst && !syncCursor) { syncTick(true); }   // silent catch-up on restore
+  syncTick();
+  syncTimer = setInterval(syncTick, 5000);
+}
 function stopSyncPoll(){ if (syncTimer) { clearInterval(syncTimer); syncTimer = null; } }
 function paintSyncNote(){
   $('clipSyncNote').textContent = $('clipSyncChk').checked
@@ -2046,8 +2058,8 @@ $('clipSyncChk').addEventListener('change', async e => {
       body: JSON.stringify({ key: 'clip_sync', value: on }),
     });
   } catch (_) { status('Could not save the sync setting', true); }
-  if (on) { syncCursor = null; syncKnownOn = true; startSyncPoll(); }
-  else { stopSyncPoll(); syncCursor = null; }   // one tap off + cursor cleared (#72)
+  if (on) { syncCursor = null; syncKnownOn = true; startSyncPoll(); localStorage.removeItem('rd_syncCursor'); }
+  else { stopSyncPoll(); syncCursor = null; localStorage.removeItem('rd_syncCursor'); }   // one tap off + cursor cleared (#72)
   paintSyncNote();
   status(on ? 'Clipboard sync ON (while visible)' : 'Clipboard sync OFF — sync cache cleared');
 });
@@ -2062,7 +2074,7 @@ document.addEventListener('visibilitychange', () => {
     const s = j.settings || {};
     syncKnownOn = !!s.clip_sync;
     $('clipSyncChk').checked = syncKnownOn;
-    if (syncKnownOn) startSyncPoll();
+    if (syncKnownOn) startSyncPoll(true);   // silent catch-up, no re-copy
     paintSyncNote();
     $('geoChk').checked = s.geo_remember !== false;
   } catch (_) { paintSyncNote(); }
@@ -3378,7 +3390,7 @@ setInterval(async () => {
 if ('serviceWorker' in navigator &&
     (window.isSecureContext || ['localhost', '127.0.0.1'].includes(location.hostname))) {
   addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=2.6.11').then(reg => {
+    navigator.serviceWorker.register('/sw.js?v=2.6.12').then(reg => {
       if (reg.waiting && navigator.serviceWorker.controller)
         status('App update ready — reload to apply');
       reg.addEventListener('updatefound', () => {

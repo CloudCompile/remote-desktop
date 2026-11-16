@@ -10,6 +10,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/), semver.
 - v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones, release themes
   and linked issues.
 
+## [2.6.12] — 2026-11-16
+
+### Fixed
+
+- Clipboard sync no longer re-pushes the newest desktop copy after a
+  page reload: the sync cursor persists per device and a restored page
+  silently catches up (peek) instead of overwriting the phone clipboard
+  with an old item (#72).
+
 ## [2.6.11] — 2026-11-16
 
 ### Fixed

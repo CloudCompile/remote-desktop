@@ -534,12 +534,16 @@ def clip_clear(keep_pinned=True, user=None):
         _clip_save(user)
 
 
-def clip_sync(since_id, user=None):
+def clip_sync(since_id, user=None, cursor_only=False):
     """Desktop→phone push channel (#72): served only while the opt-in
     toggle is on (consent lives in the More sheet, stored in state).
     Returns the newest items after `since_id` for the phone to write into
     navigator.clipboard (best-effort, poll every 5 s while visible).
-    Scoped per user (#120)."""
+    Scoped per user (#120).
+
+    cursor_only=True hands back just the newest id (no payload) so a
+    page reload can catch up silently instead of re-pushing a clipboard
+    item the phone already received."""
     try:
         from . import state
 
@@ -550,6 +554,10 @@ def clip_sync(since_id, user=None):
         return {"enabled": False, "items": []}
     with _clip_lock:
         items = list(_hist(user))
+    if cursor_only:
+        newest = next((it["id"] for it in items
+                       if it.get("kind", "text") == "text" and it["text"]), None)
+        return {"enabled": True, "items": [], "cursor": newest}
     if since_id:
         idx = next((i for i, it in enumerate(items) if it["id"] == since_id), None)
         # an unknown/trimmed since id falls back to the newest item so the

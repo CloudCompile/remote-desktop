@@ -553,8 +553,10 @@ class Handler(http.BaseHandler):
             items = clipboard.clip_history(q.get("q", [None])[0], q.get("tag", [None])[0], user=self.user)
             return self._json(200, {"items": items, "tags": clipboard.clip_tags(user=self.user)})
         if path == "/api/clipboard/sync":  # #72: desktop -> phone push (opt-in)
-            since = parse_qs(url.query).get("since", [""])[0][:64]
-            return self._json(200, clipboard.clip_sync(since, user=self.user))
+            q = parse_qs(url.query)
+            since = q.get("since", [""])[0][:64]
+            peek = q.get("peek", [""])[0] == "1"
+            return self._json(200, clipboard.clip_sync(since or None, user=self.user, cursor_only=peek))
         if path == "/api/clipboard/image":  # #71: serve a stored image
             it = clipboard.clip_item(parse_qs(url.query).get("id", [""])[0], user=self.user)
             p = clipboard.clip_image_path(it["id"], user=self.user) if it else None
