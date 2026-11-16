@@ -2827,7 +2827,7 @@ async function startPCM(){
   try {
     actx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: SR });
     await actx.resume();
-    const resp = await fetch('/api/audio/raw', { cache: 'no-store' });
+    const resp = await fetch('/api/audio.raw', { cache: 'no-store' });
     if (!resp.ok || !resp.body) throw new Error('HTTP ' + resp.status);
     reader = resp.body.getReader();
     carry = new Uint8Array(0);
@@ -3378,7 +3378,7 @@ setInterval(async () => {
 if ('serviceWorker' in navigator &&
     (window.isSecureContext || ['localhost', '127.0.0.1'].includes(location.hostname))) {
   addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=2.6.10').then(reg => {
+    navigator.serviceWorker.register('/sw.js?v=2.6.11').then(reg => {
       if (reg.waiting && navigator.serviceWorker.controller)
         status('App update ready — reload to apply');
       reg.addEventListener('updatefound', () => {

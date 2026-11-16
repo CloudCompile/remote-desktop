@@ -10,6 +10,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/), semver.
 - v3.0.0 — see [ROADMAP.md](ROADMAP.md) for milestones, release themes
   and linked issues.
 
+## [2.6.11] — 2026-11-16
+
+### Fixed
+
+- Re-fixed the PCM fallback route typo (`/api/audio/raw` →
+  `/api/audio.raw`) that the WebRTC merge reintroduced; the stale cached
+  client was still requesting the 404 route for mic/cam/audio panels.
+
 ## [2.6.10] — 2026-11-15
 
 ### Fixed
